@@ -23,5 +23,10 @@ namespace ClientApp.Models
             FileName = fileName;
             FileSize = fileSize;
         }
+
+        public override string ToString()
+        {
+            return $"{FileName} ({FileSize / 1024.0:F2} KB)";
+        }
     }
 }
