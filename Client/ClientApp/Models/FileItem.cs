@@ -15,10 +15,10 @@ namespace ClientApp.Models
         public FileItem(string fileName, long fileSize)
         {
             if (string.IsNullOrWhiteSpace(fileName))
-                throw new ArgumentException("Tên file không được để trống.");
+                throw new ArgumentException("Ten file khong duoc de trong.");
 
             if (fileSize < 0)
-                throw new ArgumentException("Kích thước file không hợp lệ.");
+                throw new ArgumentException("Kich thuoc file khong hop le.");
 
             FileName = fileName;
             FileSize = fileSize;
