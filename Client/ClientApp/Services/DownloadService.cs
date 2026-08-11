@@ -36,8 +36,6 @@ namespace ClientApp.Services
             try
             {
                 string targetFilePath = Path.Combine(_downloadFolder, item.FileName);
-
-                // Áp dụng Quy tắc xử lý khi file đích đã tồn tại
                 if (File.Exists(targetFilePath))
                 {
                     if (TargetRule == OverwriteRule.Rename)
@@ -77,7 +75,6 @@ namespace ClientApp.Services
             }
             catch
             {
-                // Lỗi của file này không làm ảnh hưởng đến file khác trong Semaphore
                 item.Status = DownloadStatus.Failed;
                 item.Speed = 0;
             }
