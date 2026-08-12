@@ -3,7 +3,7 @@ namespace ClientApp.Services
 {
     public class ProgressService
     {
-        public event EventHandler<DownloadItem> ProgressChanged;
+        public event EventHandler<DownloadItem>? ProgressChanged;
         private readonly Dictionary<string, (long bytes, DateTime time)> _lastUpdate = new();
         
         public void UpdateProgress(DownloadItem item, long downloadedBytes)

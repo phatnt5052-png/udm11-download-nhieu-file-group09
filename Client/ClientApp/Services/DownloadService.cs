@@ -44,7 +44,8 @@ namespace ClientApp.Services
                         string nameWithoutExt = Path.GetFileNameWithoutExtension(item.FileName);
                         string uniqueName = $"{nameWithoutExt}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
                         targetFilePath = Path.Combine(_downloadFolder, uniqueName);
-                        item.FileName = uniqueName; // Cập nhật lại tên hiển thị mới
+                        item.FileName = uniqueName; // Update the filename in the item to reflect the new name
+
                     }
                     else if (TargetRule == OverwriteRule.Overwrite)
                     {
@@ -52,7 +53,7 @@ namespace ClientApp.Services
                     }
                 }
 
-                var progressService = new ProgressService(item);
+                var progressService = new ProgressService();
 
                 await _clientService.DownloadFileFromServerAsync(item.FileName, async (networkStream, size) =>
                 {
@@ -65,18 +66,18 @@ namespace ClientApp.Services
                     {
                         await fileStream.WriteAsync(buffer, 0, bytesRead);
                         totalBytesRead += bytesRead;
-                        progressService.UpdateProgress(totalBytesRead);
+                        progressService.UpdateProgress(item,totalBytesRead);
                     }
                 });
 
                 item.Status = DownloadStatus.Completed;
                 item.Progress = 100;
-                item.Speed = 0;
+                item.SpeedMbps   = 0;
             }
             catch
             {
                 item.Status = DownloadStatus.Failed;
-                item.Speed = 0;
+                item.SpeedMbps = 0;
             }
             finally
             {
