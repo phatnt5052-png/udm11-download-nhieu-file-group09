@@ -1,1 +1,22 @@
+using System;
+using System.Windows.Forms;
 
+namespace ServerApp
+{
+    internal static class Program
+    {
+        /// <summary>
+        ///  Điểm khởi đầu chính của ứng dụng
+        /// </summary>
+        [STAThread]
+        static void Main()
+        {
+            // Để tùy chỉnh cấu hình ứng dụng, chẳng hạn như thiết lập độ phân giải cao (DPI) hoặc phông chữ mặc định,
+            // xem https://aka.ms/applicationconfiguration.
+            ApplicationConfiguration.Initialize();
+            
+            // Khởi chạy ServerMainForm thay vì MainForm của Client
+            Application.Run(new ServerMainForm());
+        }
+    }
+}
