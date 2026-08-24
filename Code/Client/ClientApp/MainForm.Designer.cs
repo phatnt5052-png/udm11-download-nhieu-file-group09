@@ -69,6 +69,7 @@
             lstServerFiles.Name = "lstServerFiles";
             lstServerFiles.Size = new Size(400, 244);
             lstServerFiles.TabIndex = 2;
+            lstServerFiles.SelectedIndexChanged += lstServerFiles_SelectedIndexChanged;
             // 
             // btnRefresh
             // 
@@ -78,6 +79,7 @@
             btnRefresh.TabIndex = 3;
             btnRefresh.Text = "Làm mới";
             btnRefresh.UseVisualStyleBackColor = true;
+            btnRefresh.Click += btnRefresh_Click;
             // 
             // btnAdd
             // 
@@ -87,7 +89,7 @@
             btnAdd.TabIndex = 4;
             btnAdd.Text = "Thêm";
             btnAdd.UseVisualStyleBackColor = true;
-            btnAdd.Click += button2_Click;
+            btnAdd.Click += btnAdd_Click;
             // 
             // btnDownload
             // 
@@ -97,6 +99,7 @@
             btnDownload.TabIndex = 5;
             btnDownload.Text = "Tải xuống";
             btnDownload.UseVisualStyleBackColor = true;
+            btnDownload.Click += btnDownload_Click;
             // 
             // btnRemove
             // 
@@ -106,6 +109,7 @@
             btnRemove.TabIndex = 6;
             btnRemove.Text = "Xóa";
             btnRemove.UseVisualStyleBackColor = true;
+            btnRemove.Click += btnRemove_Click;
             // 
             // lstDownloadQueue
             // 
@@ -114,6 +118,7 @@
             lstDownloadQueue.Name = "lstDownloadQueue";
             lstDownloadQueue.Size = new Size(400, 244);
             lstDownloadQueue.TabIndex = 7;
+            lstDownloadQueue.SelectedIndexChanged += lstDownloadQueue_SelectedIndexChanged;
             // 
             // lvDownloads
             // 
@@ -173,8 +178,6 @@
         private Label lblServerFiles;
         private Label lblDownloadQueue;
         private ListBox lstServerFiles;
-        private Button button1;
-        private Button button2;
         private Button btnDownload;
         private Button btnRemove;
         private ListBox lstDownloadQueue;
