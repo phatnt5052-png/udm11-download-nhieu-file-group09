@@ -51,7 +51,18 @@
             tsslSpring = new ToolStripStatusLabel();
 
             toolTip1 = new ToolTip(components);
+            // ── FORM SIZE ──────────────────────────────────────────────────────
+            this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
+            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+            this.ClientSize = new System.Drawing.Size(1000, 600);  // >= 646 pixels
+            this.Controls.Add(pnlTop);
+            this.Controls.Add(splitMain);
+            this.Controls.Add(statusStrip1);
+            this.Name = "MainForm";
+            this.Text = "TCP File Downloader";
+            this.WindowState = System.Windows.Forms.FormWindowState.Normal;
 
+            
             // ── Suspend ──────────────────────────────────────────────
             pnlTop.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)splitMain).BeginInit();
@@ -76,6 +87,20 @@
             lblTitle.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
             lblTitle.AutoSize = true;
             lblTitle.Location = new Point(14, 17);
+
+            // ── Resume ──────────────────────────────────────────────────────────
+            ((System.ComponentModel.ISupportInitialize)splitMain).EndInit();
+            splitMain.ResumeLayout(false);
+            grpQueue.ResumeLayout(false);
+            pnlQueueBtns.ResumeLayout(false);
+            grpServer.ResumeLayout(false);
+            pnlServerBtns.ResumeLayout(false);
+            statusStrip1.ResumeLayout(false);
+            statusStrip1.PerformLayout();
+            pnlTop.ResumeLayout(false);
+            pnlTop.PerformLayout();
+            ResumeLayout(false);
+            PerformLayout();
 
             lblServer.Text = "Server:";
             lblServer.ForeColor = Color.FromArgb(174, 182, 191);

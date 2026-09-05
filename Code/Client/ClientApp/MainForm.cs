@@ -31,14 +31,8 @@ namespace ClientApp
             UpdateButtonStates();
             UpdateStatusBar();
 
-            BeginInvoke(() =>
-            {
-                splitMain.Panel1MinSize = 260;
-                splitMain.Panel2MinSize = 380;
-                if (splitMain.Width > 0)
-                    splitMain.SplitterDistance = Math.Min(370,
-                        splitMain.Width - splitMain.Panel2MinSize - splitMain.SplitterWidth);
-            });
+            // SplitterDistance được tính tự động dựa trên Panel1MinSize, Panel2MinSize
+            // và kích thước form. Không cần gán thủ công.
         }
 
         // ── Connection ─────────────────────────────────────────────────
