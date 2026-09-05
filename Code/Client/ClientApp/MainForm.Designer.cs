@@ -136,6 +136,7 @@
 
             // ── SPLIT CONTAINER ──────────────────────────────────────
             splitMain.Dock = DockStyle.Fill;
+            splitMain.SplitterDistance = 400;
             splitMain.Panel1MinSize = 260;
             splitMain.Panel2MinSize = 380;
             splitMain.SplitterWidth = 6;
@@ -308,8 +309,8 @@
             pnlQueueBtns.ResumeLayout(false);
             grpQueue.ResumeLayout(false);
             splitMain.Panel2.ResumeLayout(false);
-            ((System.ComponentModel.ISupportInitialize)splitMain).EndInit();
             splitMain.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)splitMain).EndInit();
             statusStrip1.ResumeLayout(false);
             statusStrip1.PerformLayout();
             ResumeLayout(false);
