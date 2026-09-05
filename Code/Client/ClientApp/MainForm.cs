@@ -7,6 +7,8 @@ namespace ClientApp
     {
         // ── State ──────────────────────────────────────────────────────
         private readonly DownloadQueueService _queueService = new();
+        private TcpClientService? _clientService;
+        private DownloadService? _downloadService;
         private bool _isConnected = false;
 
         // ── Status row colors ──────────────────────────────────────────
@@ -35,29 +37,108 @@ namespace ClientApp
             // và kích thước form. Không cần gán thủ công.
         }
 
-        // ── Connection ─────────────────────────────────────────────────
-        private void btnConnect_Click(object sender, EventArgs e)
+        private async void btnConnect_Click(object sender, EventArgs e)
         {
-            if (!_isConnected)
+            if (_isConnected)
             {
-                // TODO: Thay thế bằng kết nối TCP thực
+                _clientService = null;
+                _downloadService = null;
+
+                SetConnectionState(false);
+
+                lstServerFiles.Items.Clear();
+
+                UpdateButtonStates();
+                UpdateStatusBar();
+
+                return;
+            }
+
+            string ip = txtServerIp.Text.Trim();
+            string portText = txtPort.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(ip))
+            {
+                MessageBox.Show(
+                    "Vui lòng nhập địa chỉ IP của Server.",
+                    "Thông báo",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+
+                txtServerIp.Focus();
+                return;
+            }
+
+            if (!int.TryParse(portText, out int port))
+            {
+                MessageBox.Show(
+                    "Port không hợp lệ.",
+                    "Lỗi",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+
+                txtPort.Focus();
+                return;
+            }
+
+            if (port < 1 || port > 65535)
+            {
+                MessageBox.Show(
+                    "Port phải nằm trong khoảng 1 - 65535.",
+                    "Lỗi",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+
+                txtPort.Focus();
+                return;
+            }
+
+            try
+            {
+                btnConnect.Enabled = false;
+
+                _clientService = new TcpClientService(ip, port);
+
+                List<FileItem> files =
+                    await _clientService.GetFileListAsync();
+
+                _downloadService =
+                    new DownloadService(_clientService, 3);
+
+                lstServerFiles.Items.Clear();
+
+                foreach (FileItem file in files)
+                {
+                    lstServerFiles.Items.Add(file);
+                }
+
                 SetConnectionState(true);
 
-                // Giả lập danh sách file server (thay bằng lệnh gọi thực tế)
-                lstServerFiles.Items.Clear();
-                lstServerFiles.Items.Add(new FileItem("document.pdf", 1_048_576));
-                lstServerFiles.Items.Add(new FileItem("video.mp4", 52_428_800));
-                lstServerFiles.Items.Add(new FileItem("archive.zip", 10_485_760));
-                lstServerFiles.Items.Add(new FileItem("image.png", 524_288));
-                lstServerFiles.Items.Add(new FileItem("data.csv", 204_800));
+                UpdateButtonStates();
+                UpdateStatusBar();
             }
-            else
+            catch (Exception ex)
             {
-                SetConnectionState(false);
-                lstServerFiles.Items.Clear();
-            }
+                _clientService = null;
+                _downloadService = null;
 
-            UpdateButtonStates();
+                SetConnectionState(false);
+
+                lstServerFiles.Items.Clear();
+
+                MessageBox.Show(
+                    "Không thể kết nối đến Server.\n\n" +
+                    $"Địa chỉ: {ip}:{port}\n" +
+                    $"Chi tiết: {ex.Message}",
+                    "Kết nối thất bại",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnConnect.Enabled = true;
+                UpdateButtonStates();
+            }
         }
 
         private void SetConnectionState(bool connected)
@@ -95,21 +176,56 @@ namespace ClientApp
         }
 
         // ── Refresh server file list ───────────────────────────────────
-        private void btnRefresh_Click(object sender, EventArgs e)
+            private async void btnRefresh_Click(object sender, EventArgs e)
         {
-            if (!_isConnected)
+            if (!_isConnected || _clientService == null)
             {
                 MessageBox.Show(
                     "Vui lòng kết nối đến server trước.",
                     "Thông báo",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
+
                 return;
             }
 
-            // TODO: Gọi service thực tế để lấy danh sách file
-            MessageBox.Show("Đã tải lại danh sách file.", "Thông báo",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            try
+            {
+                btnRefresh.Enabled = false;
+
+                List<FileItem> files =
+                    await _clientService.GetFileListAsync();
+
+                lstServerFiles.Items.Clear();
+
+                foreach (FileItem file in files)
+                {
+                    lstServerFiles.Items.Add(file);
+                }
+
+                UpdateButtonStates();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "Không thể cập nhật danh sách file.\n\n" +
+                    ex.Message,
+                    "Lỗi",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+
+                _clientService = null;
+                _downloadService = null;
+
+                SetConnectionState(false);
+
+                lstServerFiles.Items.Clear();
+            }
+            finally
+            {
+                btnRefresh.Enabled = _isConnected;
+                UpdateButtonStates();
+            }
         }
 
         // ── Add to queue ───────────────────────────────────────────────
@@ -177,20 +293,79 @@ namespace ClientApp
         }
 
         // ── Start download ─────────────────────────────────────────────
-        private void btnDownload_Click(object sender, EventArgs e)
+        private async void btnDownload_Click(object sender, EventArgs e)
         {
-            if (_queueService.GetQueue().Count == 0)
+            if (!_isConnected || _downloadService == null)
             {
-                MessageBox.Show("Hàng đợi đang trống.", "Thông báo",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(
+                    "Vui lòng kết nối đến Server trước.",
+                    "Thông báo",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+
                 return;
             }
 
-            // TODO: Triển khai logic tải TCP thực tế ở đây
-            MessageBox.Show("▶ Bắt đầu tải xuống!", "Thông báo",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
+            List<DownloadItem> queue =
+                _queueService.GetQueue();
 
+            if (queue.Count == 0)
+            {
+                MessageBox.Show(
+                    "Hàng đợi đang trống.",
+                    "Thông báo",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+
+                return;
+            }
+
+            try
+            {
+                btnDownload.Enabled = false;
+                btnAdd.Enabled = false;
+                btnRemove.Enabled = false;
+
+                RefreshDownloadView();
+
+                List<Task> downloadTasks = new();
+
+                foreach (DownloadItem item in queue)
+                {
+                    downloadTasks.Add(
+                        _downloadService.ExecuteDownloadAsync(item));
+                }
+
+                await Task.WhenAll(downloadTasks);
+
+                RefreshDownloadView();
+                UpdateButtonStates();
+                UpdateStatusBar();
+
+                MessageBox.Show(
+                    "Đã xử lý xong hàng đợi tải xuống.",
+                    "Download",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "Có lỗi trong quá trình tải xuống.\n\n" +
+                    ex.Message,
+                    "Lỗi",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnDownload.Enabled =
+                    _isConnected &&
+                    _queueService.GetQueue().Count > 0;
+
+                UpdateButtonStates();
+            }
+        }
         // ── Refresh ListView ───────────────────────────────────────────
         private void RefreshDownloadView()
         {
