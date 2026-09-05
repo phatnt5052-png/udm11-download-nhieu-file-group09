@@ -1,4 +1,6 @@
-﻿namespace ClientApp
+﻿using System.Threading.Channels;
+
+namespace ClientApp
 {
     partial class MainForm
     {
@@ -309,8 +311,8 @@
             pnlQueueBtns.ResumeLayout(false);
             grpQueue.ResumeLayout(false);
             splitMain.Panel2.ResumeLayout(false);
-            splitMain.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)splitMain).EndInit();
+            splitMain.ResumeLayout(false);
             statusStrip1.ResumeLayout(false);
             statusStrip1.PerformLayout();
             ResumeLayout(false);
