@@ -137,8 +137,8 @@
             // ── SPLIT CONTAINER ──────────────────────────────────────
             splitMain.Dock = DockStyle.Fill;
             splitMain.SplitterDistance = 400;
-            splitMain.Panel1MinSize = 260;
-            splitMain.Panel2MinSize = 380;
+            splitMain.Panel1MinSize = 200;
+            splitMain.Panel2MinSize = 300;
             splitMain.SplitterWidth = 6;
             splitMain.BackColor = Color.FromArgb(200, 210, 220);
             splitMain.Panel1.BackColor = Color.FromArgb(240, 244, 248);
