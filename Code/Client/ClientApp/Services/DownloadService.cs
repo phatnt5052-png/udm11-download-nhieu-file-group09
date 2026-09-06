@@ -12,14 +12,17 @@ namespace ClientApp.Services
         private readonly string _downloadFolder;
         private readonly SemaphoreSlim _semaphore;
 
+        private readonly ProgressService _progressService;
+
         // Quy tắc xử lý khi file trùng tên (Có thể mở rộng tùy chọn)
         public enum OverwriteRule { Overwrite, Rename }
         public OverwriteRule TargetRule { get; set; } = OverwriteRule.Rename;
 
-        public DownloadService(TcpClientService clientService, int maxConcurrentDownloads)
+        public DownloadService(TcpClientService clientService, ProgressService progressService, int maxConcurrentDownloads)
         {
             _clientService = clientService;
             _semaphore = new SemaphoreSlim(maxConcurrentDownloads);
+            _progressService = progressService;
 
             _downloadFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads");
             if (!Directory.Exists(_downloadFolder))
@@ -53,8 +56,7 @@ namespace ClientApp.Services
                     }
                 }
 
-                var progressService = new ProgressService();
-
+                
                 await _clientService.DownloadFileFromServerAsync(item.FileName, async (networkStream, size) =>
                 {
                     using var fileStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write, FileShare.None);
@@ -66,7 +68,7 @@ namespace ClientApp.Services
                     {
                         await fileStream.WriteAsync(buffer, 0, bytesRead);
                         totalBytesRead += bytesRead;
-                        progressService.UpdateProgress(item,totalBytesRead);
+                        _progressService.UpdateProgress(item, totalBytesRead);
                     }
                 });
 
@@ -83,6 +85,18 @@ namespace ClientApp.Services
             {
                 _semaphore.Release();
             }
+        }
+
+        public async Task StartAllAsync(DownloadQueueService queueService)
+        {
+            var items = queueService.GetQueue();
+            var tasks = new List<Task>();
+
+            foreach (var item in items)
+            {
+                tasks.Add(ExecuteDownloadAsync(item));
+            }
+            await Task.WhenAll(tasks);
         }
     }
 }
