@@ -5,6 +5,9 @@ using ServerApp.Models;
 
 namespace ServerApp.Services
 {
+    /// <summary>
+    /// Dịch vụ quản lý và truy xuất tập tin trên Server.
+    /// </summary>
     public class FileService
     {
         private readonly ServerConfig _config;
@@ -15,6 +18,9 @@ namespace ServerApp.Services
             EnsureDirectoryExists();
         }
 
+        /// <summary>
+        /// Kiểm tra và tạo thư mục chia sẻ nếu nó chưa tồn tại.
+        /// </summary>
         private void EnsureDirectoryExists()
         {
             if (!Directory.Exists(_config.SharedFolder))
@@ -23,7 +29,10 @@ namespace ServerApp.Services
             }
         }
 
-        // Lấy danh sách file
+        /// <summary>
+        /// Lấy danh sách tên tất cả các file có trong thư mục chia sẻ.
+        /// </summary>
+        /// <returns>Danh sách tên các file.</returns>
         public List<string> GetFileList()
         {
             EnsureDirectoryExists();
@@ -38,7 +47,11 @@ namespace ServerApp.Services
             return fileList;
         }
 
-        // Kiểm tra file tồn tại
+        /// <summary>
+        /// Kiểm tra xem một file có tồn tại trong thư mục chia sẻ hay không.
+        /// </summary>
+        /// <param name="fileName">Tên file cần kiểm tra.</param>
+        /// <returns>True nếu file tồn tại, ngược lại là False.</returns>
         public bool FileExists(string fileName)
         {
             if (string.IsNullOrWhiteSpace(fileName)) return false;
@@ -46,7 +59,12 @@ namespace ServerApp.Services
             return File.Exists(filePath);
         }
 
-        // Mở stream đọc file
+        /// <summary>
+        /// Mở một luồng dữ liệu (FileStream) để đọc file, hỗ trợ chia sẻ quyền đọc.
+        /// </summary>
+        /// <param name="fileName">Tên file cần mở.</param>
+        /// <returns>Một FileStream để đọc dữ liệu file.</returns>
+        /// <exception cref="FileNotFoundException">Bắn ra khi file không tồn tại.</exception>
         public FileStream OpenReadStream(string fileName)
         {
             if (!FileExists(fileName))
