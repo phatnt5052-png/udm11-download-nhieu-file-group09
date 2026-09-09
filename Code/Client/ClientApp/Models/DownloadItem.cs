@@ -14,6 +14,13 @@ namespace ClientApp.Models
 
         public double SpeedMbps { get; set; }
 
+        // Backward-compatible alias for older code using Speed
+        public double Speed
+        {
+            get => SpeedMbps;
+            set => SpeedMbps = value;
+        }
+
         public DownloadItem()
         {
             FileName = string.Empty;

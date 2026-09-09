@@ -12,17 +12,14 @@ namespace ClientApp.Services
         private readonly string _downloadFolder;
         private readonly SemaphoreSlim _semaphore;
 
-        private readonly ProgressService _progressService;
-
         // Quy tắc xử lý khi file trùng tên (Có thể mở rộng tùy chọn)
         public enum OverwriteRule { Overwrite, Rename }
         public OverwriteRule TargetRule { get; set; } = OverwriteRule.Rename;
 
-        public DownloadService(TcpClientService clientService, ProgressService progressService, int maxConcurrentDownloads)
+        public DownloadService(TcpClientService clientService, int maxConcurrentDownloads)
         {
             _clientService = clientService;
             _semaphore = new SemaphoreSlim(maxConcurrentDownloads);
-            _progressService = progressService;
 
             _downloadFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads");
             if (!Directory.Exists(_downloadFolder))
@@ -35,6 +32,7 @@ namespace ClientApp.Services
         {
             await _semaphore.WaitAsync();
             item.Status = DownloadStatus.Downloading;
+            var progressService = new ProgressService(item);
 
             try
             {
@@ -68,7 +66,7 @@ namespace ClientApp.Services
                     {
                         await fileStream.WriteAsync(buffer, 0, bytesRead);
                         totalBytesRead += bytesRead;
-                        _progressService.UpdateProgress(item, totalBytesRead);
+                        progressService.UpdateProgress(totalBytesRead);
                     }
                 });
 

@@ -19,83 +19,199 @@ namespace ClientApp.Services
             _port = port;
         }
 
+       
         public async Task<List<FileItem>> GetFileListAsync()
         {
             var list = new List<FileItem>();
 
             using var client = new TcpClient();
+
             await client.ConnectAsync(_ip, _port);
 
-            using var stream = client.GetStream();
-            using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
+            using NetworkStream stream = client.GetStream();
 
-            await writer.WriteLineAsync("LIST");
-            string countStr = await ReadLineAsync(stream);
+            // Gửi command LIST theo protocol binary
+            await WriteStringAsync(stream, "LIST");
 
-            if (int.TryParse(countStr, out int count))
+            // Server trả về số lượng file
+            int count = await ReadInt32Async(stream);
+
+            if (count < 0)
             {
-                for (int i = 0; i < count; i++)
+                throw new IOException("Số lượng file từ Server không hợp lệ.");
+            }
+
+            // Đọc từng file
+            for (int i = 0; i < count; i++)
+            {
+                string fileName = await ReadStringAsync(stream);
+
+                long fileSize = await ReadInt64Async(stream);
+
+                if (!string.IsNullOrWhiteSpace(fileName))
                 {
-                    string fileLine = await ReadLineAsync(stream);
-                    if (!string.IsNullOrEmpty(fileLine))
-                    {
-                        string[] parts = fileLine.Split('|');
-                        if (parts.Length == 2 && long.TryParse(parts[1], out long size))
-                        {
-                            list.Add(new FileItem(parts[0], size));
-                        }
-                    }
+                    list.Add(new FileItem(fileName, fileSize));
                 }
             }
 
             return list;
         }
 
-        public async Task DownloadFileFromServerAsync(string fileName, Func<Stream, long, Task> dataHandler)
+        
+        public async Task DownloadFileFromServerAsync(
+            string fileName,
+            Func<Stream, long, Task> dataHandler)
         {
             using var client = new TcpClient();
+
             await client.ConnectAsync(_ip, _port);
 
-            using var stream = client.GetStream();
-            using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
+            using NetworkStream stream = client.GetStream();
 
-            await writer.WriteLineAsync($"GET {fileName}");
-            string response = await ReadLineAsync(stream);
+            // Gửi GET
+            await WriteStringAsync(stream, "GET");
 
-            if (response != null && response.StartsWith("OK|"))
+            // Gửi tên file riêng biệt
+            await WriteStringAsync(stream, fileName);
+
+            // Đọc response
+            string response = await ReadStringAsync(stream);
+
+            if (response == "OK")
             {
-                long fileSize = long.Parse(response.Split('|')[1]);
+                // Server gửi lại tên file
+                string serverFileName = await ReadStringAsync(stream);
+
+                // Server gửi kích thước file
+                long fileSize = await ReadInt64Async(stream);
+
+                if (fileSize < 0)
+                {
+                    throw new IOException(
+                        "Kích thước file từ Server không hợp lệ.");
+                }
+
+                // Đưa stream + kích thước cho DownloadService xử lý
                 await dataHandler(stream, fileSize);
+            }
+            else if (response == "ERROR")
+            {
+                string errorMessage = await ReadStringAsync(stream);
+
+                throw new FileNotFoundException(
+                    errorMessage);
             }
             else
             {
-                throw new FileNotFoundException(response ?? "Không có phản hồi từ máy chủ");
+                throw new IOException(
+                    $"Server trả về phản hồi không hợp lệ: {response}");
             }
         }
 
-        private static async Task<string> ReadLineAsync(NetworkStream stream)
+        
+        private static async Task WriteStringAsync(
+            NetworkStream stream,
+            string text)
         {
-            using var memory = new MemoryStream();
-            byte[] buffer = new byte[1];
+            byte[] data = Encoding.UTF8.GetBytes(text);
 
-            while (true)
+            await WriteInt32Async(stream, data.Length);
+
+            await stream.WriteAsync(
+                data,
+                0,
+                data.Length);
+        }
+
+        
+        private static async Task<string> ReadStringAsync(
+            NetworkStream stream)
+        {
+            int length = await ReadInt32Async(stream);
+
+            if (length < 0 || length > 10_000_000)
             {
-                int bytesRead = await stream.ReadAsync(buffer, 0, 1);
-                if (bytesRead == 0)
+                throw new IOException(
+                    $"Độ dài chuỗi không hợp lệ: {length}");
+            }
+
+            byte[] data = new byte[length];
+
+            await ReadExactAsync(
+                stream,
+                data,
+                0,
+                length);
+
+            return Encoding.UTF8.GetString(data);
+        }
+
+       
+        private static async Task WriteInt32Async(
+            NetworkStream stream,
+            int value)
+        {
+            byte[] data = BitConverter.GetBytes(value);
+
+            await stream.WriteAsync(
+                data,
+                0,
+                data.Length);
+        }
+
+        
+        private static async Task<int> ReadInt32Async(
+            NetworkStream stream)
+        {
+            byte[] data = new byte[4];
+
+            await ReadExactAsync(
+                stream,
+                data,
+                0,
+                4);
+
+            return BitConverter.ToInt32(data, 0);
+        }
+
+        
+        private static async Task<long> ReadInt64Async(
+            NetworkStream stream)
+        {
+            byte[] data = new byte[8];
+
+            await ReadExactAsync(
+                stream,
+                data,
+                0,
+                8);
+
+            return BitConverter.ToInt64(data, 0);
+        }
+
+        
+        private static async Task ReadExactAsync(
+            NetworkStream stream,
+            byte[] buffer,
+            int offset,
+            int count)
+        {
+            int totalRead = 0;
+
+            while (totalRead < count)
+            {
+                int read = await stream.ReadAsync(
+                    buffer,
+                    offset + totalRead,
+                    count - totalRead);
+
+                if (read == 0)
                 {
-                    return memory.Length == 0 ? string.Empty : Encoding.UTF8.GetString(memory.ToArray());
+                    throw new IOException(
+                        "Kết nối Server đã bị đóng.");
                 }
 
-                byte b = buffer[0];
-                if (b == '\n')
-                {
-                    return Encoding.UTF8.GetString(memory.ToArray());
-                }
-
-                if (b != '\r')
-                {
-                    memory.WriteByte(b);
-                }
+                totalRead += read;
             }
         }
     }

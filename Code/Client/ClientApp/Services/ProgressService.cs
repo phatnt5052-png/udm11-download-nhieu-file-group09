@@ -29,8 +29,11 @@ namespace ClientApp.Services
             if (elapsed >= 0.5) // Cập nhật tốc độ mỗi 0.5s để tránh nhảy số liên tục
             {
                 long currentDelta = bytesRead - _lastBytes;
-                double speedKb = (currentDelta / 1024.0) / elapsed;
-                _item.Speed = Math.Round(speedKb, 2);
+                // speed in bytes per second
+                double speedBytesPerSec = currentDelta / elapsed;
+                // convert to megabits per second: bytes -> bits -> megabits
+                double speedMbps = (speedBytesPerSec * 8.0) / (1024.0 * 1024.0);
+                _item.SpeedMbps = Math.Round(speedMbps, 2);
 
                 _lastTime = now;
                 _lastBytes = bytesRead;
