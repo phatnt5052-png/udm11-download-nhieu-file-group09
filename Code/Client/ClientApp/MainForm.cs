@@ -25,16 +25,23 @@ namespace ClientApp
 
         private void MainForm_Load(object sender, EventArgs e)
         {
+            // Cho phép chọn nhiều file Server
+            lstServerFiles.SelectionMode = SelectionMode.MultiExtended;
 
-            // Right-align buttons inside fixed-height panels at runtime
-            btnAdd.Location = new Point(pnlServerBtns.Width - btnAdd.Width, 8);
-            btnDownload.Location = new Point(pnlQueueBtns.Width - btnDownload.Width, 8);
+            // Cho phép chọn nhiều file trong hàng đợi
+            lvDownloads.MultiSelect = true;
+            lvDownloads.HideSelection = false;
+
+            btnAdd.Location = new Point(
+                pnlServerBtns.Width - btnAdd.Width,
+                8);
+
+            btnDownload.Location = new Point(
+                pnlQueueBtns.Width - btnDownload.Width,
+                8);
 
             UpdateButtonStates();
             UpdateStatusBar();
-
-            // SplitterDistance được tính tự động dựa trên Panel1MinSize, Panel2MinSize
-            // và kích thước form. Không cần gán thủ công.
         }
 
         private async void btnConnect_Click(object sender, EventArgs e)
@@ -322,25 +329,23 @@ namespace ClientApp
 
             try
             {
+                // Khóa các nút trong lúc download
                 btnDownload.Enabled = false;
                 btnAdd.Enabled = false;
                 btnRemove.Enabled = false;
+                btnRefresh.Enabled = false;
 
                 RefreshDownloadView();
 
-                List<Task> downloadTasks = new();
-
+                // TẢI TUẦN TỰ TỪNG FILE
                 foreach (DownloadItem item in queue)
                 {
-                    downloadTasks.Add(
-                        _downloadService.ExecuteDownloadAsync(item));
+                    await _downloadService.ExecuteDownloadAsync(item);
+
+                    // Cập nhật UI sau mỗi file
+                    RefreshDownloadView();
+                    UpdateStatusBar();
                 }
-
-                await Task.WhenAll(downloadTasks);
-
-                RefreshDownloadView();
-                UpdateButtonStates();
-                UpdateStatusBar();
 
                 MessageBox.Show(
                     "Đã xử lý xong hàng đợi tải xuống.",
@@ -363,7 +368,18 @@ namespace ClientApp
                     _isConnected &&
                     _queueService.GetQueue().Count > 0;
 
+                btnAdd.Enabled =
+                    _isConnected &&
+                    lstServerFiles.SelectedItems.Count > 0;
+
+                btnRemove.Enabled =
+                    lvDownloads.SelectedItems.Count > 0;
+
+                btnRefresh.Enabled =
+                    _isConnected;
+
                 UpdateButtonStates();
+                UpdateStatusBar();
             }
         }
         // ── Refresh ListView ───────────────────────────────────────────
@@ -394,9 +410,14 @@ namespace ClientApp
 
         private static Color StatusColor(string status) => status switch
         {
+            "Downloading" => ClrDownloading,
+            "Completed" => ClrCompleted,
+            "Failed" => ClrError,
+            "Waiting" => ClrPending,
             "Đang tải" => ClrDownloading,
             "Hoàn thành" => ClrCompleted,
             "Lỗi" => ClrError,
+
             _ => ClrPending
         };
 
