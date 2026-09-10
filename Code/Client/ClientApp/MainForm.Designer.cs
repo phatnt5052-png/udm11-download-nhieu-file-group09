@@ -124,7 +124,7 @@ namespace ClientApp
             lblPort.AutoSize = true;
             lblPort.Location = new Point(428, 19);
 
-            txtPort.Text = "8080";
+            txtPort.Text = "5000";
             txtPort.Font = new Font("Segoe UI", 9.5f);
             txtPort.BorderStyle = BorderStyle.FixedSingle;
             txtPort.Location = new Point(472, 15);

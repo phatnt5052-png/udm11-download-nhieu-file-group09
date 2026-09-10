@@ -36,6 +36,9 @@ namespace ClientApp.Services
 
             try
             {
+                // Giữ tên file gốc để gửi cho server
+                string originalFileName = item.FileName;
+
                 string targetFilePath = Path.Combine(_downloadFolder, item.FileName);
                 if (File.Exists(targetFilePath))
                 {
@@ -45,7 +48,8 @@ namespace ClientApp.Services
                         string nameWithoutExt = Path.GetFileNameWithoutExtension(item.FileName);
                         string uniqueName = $"{nameWithoutExt}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
                         targetFilePath = Path.Combine(_downloadFolder, uniqueName);
-                        item.FileName = uniqueName; // Update the filename in the item to reflect the new name
+                        // NƠI NÀY CHỈ ĐỔI LOCAL PATH, KHÔNG ĐỔI item.FileName
+                        // item.FileName vẫn giữ tên gốc để gửi cho server
 
                     }
                     else if (TargetRule == OverwriteRule.Overwrite)
@@ -54,8 +58,8 @@ namespace ClientApp.Services
                     }
                 }
 
-                
-                await _clientService.DownloadFileFromServerAsync(item.FileName, async (networkStream, size) =>
+                // Download file từ server - GỬI TÊN FILE GỐC
+                await _clientService.DownloadFileFromServerAsync(originalFileName, async (networkStream, size) =>
                 {
                     using var fileStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write, FileShare.None);
                     byte[] buffer = new byte[8192];
@@ -68,16 +72,26 @@ namespace ClientApp.Services
                         totalBytesRead += bytesRead;
                         progressService.UpdateProgress(totalBytesRead);
                     }
+
+                    // Verify file size matches
+                    if (totalBytesRead != size)
+                    {
+                        throw new IOException($"Kích thước file không khớp. Nhận: {totalBytesRead}, Mong đợi: {size}");
+                    }
                 });
 
+                // Update UI với tên file được lưu
+                item.FileName = Path.GetFileName(targetFilePath);
                 item.Status = DownloadStatus.Completed;
                 item.Progress = 100;
-                item.SpeedMbps   = 0;
+                item.SpeedMbps = 0;
             }
-            catch
+            catch (Exception ex)
             {
                 item.Status = DownloadStatus.Failed;
                 item.SpeedMbps = 0;
+                // Log error nếu cần
+                System.Diagnostics.Debug.WriteLine($"Download Failed: {ex.Message}");
             }
             finally
             {

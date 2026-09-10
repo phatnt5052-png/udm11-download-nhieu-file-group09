@@ -1,5 +1,6 @@
 using ClientApp.Models;
 using ClientApp.Services;
+using ClientApp.Helpers;
 
 namespace ClientApp
 {
@@ -31,6 +32,25 @@ namespace ClientApp
             // Cho phép chọn nhiều file trong hàng đợi
             lvDownloads.MultiSelect = true;
             lvDownloads.HideSelection = false;
+
+            // === Tạo nút "Mở thư mục" ===
+            Button btnOpenFolder = new Button
+            {
+                Text = "📁  Mở",
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(155, 89, 182),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                Size = new Size(70, 32),
+                Location = new Point(5, 8),
+                Cursor = Cursors.Hand
+            };
+            btnOpenFolder.FlatAppearance.BorderColor = Color.FromArgb(155, 89, 182);
+            btnOpenFolder.Click += (s, e) => FolderHelper.OpenDownloadsFolder();
+            pnlServerBtns.Controls.Add(btnOpenFolder);
+
+            // Cập nhật vị trí btnRefresh để không bị đè
+            btnRefresh.Location = new Point(80, 8);
 
             btnAdd.Location = new Point(
                 pnlServerBtns.Width - btnAdd.Width,
