@@ -16,6 +16,16 @@ namespace ClientApp
         private TcpClientService? _clientService;
         private DownloadService? _downloadService;
         private bool _isConnected = false;
+        private bool _isDownloadInProgress = false;
+
+        // Kiểm tra định kỳ xem Server có còn phản hồi không, để phát hiện
+        // chủ động việc mất kết nối (vd. Server bị Stop) thay vì phải đợi
+        // người dùng bấm Refresh/Tải mới biết.
+        private readonly System.Windows.Forms.Timer _connectionMonitorTimer = new()
+        {
+            Interval = 5000 // 5 giây
+        };
+        private bool _isMonitorTicking = false;
 
         // ── Drag-select (quét khối) state cho lvDownloads ────────────────
         private Point _dragStartPoint;
@@ -47,6 +57,8 @@ namespace ClientApp
             lvDownloads.MouseDown += lvDownloads_MouseDown;
             lvDownloads.MouseMove += lvDownloads_MouseMove;
             lvDownloads.MouseUp += lvDownloads_MouseUp;
+
+            _connectionMonitorTimer.Tick += ConnectionMonitorTimer_Tick;
 
             // === Tạo nút "Mở thư mục" ===
             Button btnOpenFolder = new Button
@@ -133,6 +145,7 @@ namespace ClientApp
                 }
 
                 SetConnectionState(true);
+                _connectionMonitorTimer.Start();
             }
             catch (Exception ex)
             {
@@ -157,6 +170,8 @@ namespace ClientApp
         // Hàm hỗ trợ dọn dẹp kết nối an toàn
         private void DisconnectClient()
         {
+            _connectionMonitorTimer.Stop();
+
             try
             {
                 _clientService?.Disconnect();
@@ -204,6 +219,47 @@ namespace ClientApp
                 tsslStatus.ForeColor = Color.FromArgb(127, 140, 141);
                 txtServerIp.Enabled = true;
                 txtPort.Enabled = true;
+            }
+        }
+
+        // ── Connection monitor (phát hiện chủ động mất kết nối) ──────────
+        private async void ConnectionMonitorTimer_Tick(object? sender, EventArgs e)
+        {
+            // Bỏ qua nếu: đang không kết nối, đang tải file, hoặc lần kiểm tra
+            // trước vẫn chưa xong (tránh chồng chéo nhiều request cùng lúc).
+            if (!_isConnected || _isDownloadInProgress || _isMonitorTicking || _clientService == null)
+            {
+                return;
+            }
+
+            _isMonitorTicking = true;
+
+            try
+            {
+                List<FileItem> files = await _clientService.GetFileListAsync();
+
+                // Vẫn còn kết nối được -> đồng bộ lại danh sách file mới nhất
+                lstServerFiles.Items.Clear();
+                foreach (FileItem file in files)
+                {
+                    lstServerFiles.Items.Add(file);
+                }
+            }
+            catch
+            {
+                // Server không còn phản hồi -> chủ động ngắt kết nối phía UI
+                // để không hiển thị danh sách file "ảo" của một kết nối đã chết.
+                DisconnectClient();
+
+                MessageBox.Show(
+                    "Mất kết nối tới Server (Server có thể đã dừng).",
+                    "Mất kết nối",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                _isMonitorTicking = false;
             }
         }
 
@@ -322,7 +378,7 @@ namespace ClientApp
             {
                 DisconnectClient();
                 MessageBox.Show(
-                    "Không thể tải file! Chưa kết nối hoặc kết nối tới Server đã bị ngắt.",
+                    "Vui lòng kết nối tới Server.",
                     "Lỗi kết nối",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
@@ -364,6 +420,7 @@ namespace ClientApp
                 btnAdd.Enabled = false;
                 btnRemove.Enabled = false;
                 btnRefresh.Enabled = false;
+                _isDownloadInProgress = true;
 
                 RefreshDownloadView();
 
@@ -427,6 +484,7 @@ namespace ClientApp
             }
             finally
             {
+                _isDownloadInProgress = false;
                 UpdateButtonStates();
                 UpdateStatusBar();
             }
@@ -486,7 +544,7 @@ namespace ClientApp
             btnAdd.Enabled = _isConnected && lstServerFiles.SelectedItems.Count > 0;
             btnRefresh.Enabled = _isConnected;
             btnRemove.Enabled = lvDownloads.SelectedItems.Count > 0;
-            btnDownload.Enabled = _isConnected && queueCount > 0;
+            btnDownload.Enabled = queueCount > 0;
         }
 
         private void UpdateStatusBar()

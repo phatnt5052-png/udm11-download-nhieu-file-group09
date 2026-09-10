@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using ClientApp.Models;
 
@@ -29,6 +30,10 @@ namespace ClientApp.Services
             _port = port;
         }
 
+        // Server không phản hồi trong khoảng thời gian này thì coi như mất kết nối
+        // và báo lỗi ngay, thay vì để hệ điều hành tự chờ TCP timeout (có thể rất lâu).
+        private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(5);
+
         public async Task<List<FileItem>> GetFileListAsync()
         {
             try
@@ -36,7 +41,16 @@ namespace ClientApp.Services
                 var list = new List<FileItem>();
 
                 using var client = new TcpClient();
-                await client.ConnectAsync(_ip, _port);
+                using var connectCts = new CancellationTokenSource(ConnectTimeout);
+
+                try
+                {
+                    await client.ConnectAsync(_ip, _port, connectCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw new IOException($"Không thể kết nối tới Server {_ip}:{_port} (hết thời gian chờ).");
+                }
 
                 using NetworkStream stream = client.GetStream();
 
@@ -77,7 +91,16 @@ namespace ClientApp.Services
             try
             {
                 using var client = new TcpClient();
-                await client.ConnectAsync(_ip, _port);
+                using var connectCts = new CancellationTokenSource(ConnectTimeout);
+
+                try
+                {
+                    await client.ConnectAsync(_ip, _port, connectCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw new IOException($"Không thể kết nối tới Server {_ip}:{_port} (hết thời gian chờ).");
+                }
 
                 using NetworkStream stream = client.GetStream();
 
