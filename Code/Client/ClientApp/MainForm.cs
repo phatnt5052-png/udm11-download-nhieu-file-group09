@@ -468,7 +468,7 @@ namespace ClientApp
                 if (_isConnected)
                 {
                     MessageBox.Show(
-                        "Đã xử lý xong hàng đợi tải xuống.",
+                        "Đã tải file thành công.",
                         "Download",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information);

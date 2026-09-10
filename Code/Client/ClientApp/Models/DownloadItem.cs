@@ -30,10 +30,10 @@ namespace ClientApp.Models
         public DownloadItem(string fileName, long fileSize)
         {
             if (string.IsNullOrWhiteSpace(fileName))
-                throw new ArgumentException("Ten file không hop le.");
+                throw new ArgumentException("Tên file không hợp lệ.");
 
             if (fileSize < 0)
-                throw new ArgumentException("Kich thuoc file khong hop le.");
+                throw new ArgumentException("Kích thước file không hợp lệ.");
 
             FileName = fileName;
             FileSize = fileSize;
