@@ -1,3 +1,8 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Linq;
+using System.Windows.Forms;
 using ClientApp.Models;
 using ClientApp.Services;
 using ClientApp.Helpers;
@@ -11,6 +16,10 @@ namespace ClientApp
         private TcpClientService? _clientService;
         private DownloadService? _downloadService;
         private bool _isConnected = false;
+
+        // ── Drag-select (quét khối) state cho lvDownloads ────────────────
+        private Point _dragStartPoint;
+        private bool _isDragSelecting = false;
 
         // ── Status row colors ──────────────────────────────────────────
         private static readonly Color ClrPending = Color.FromArgb(250, 251, 252);
@@ -32,6 +41,12 @@ namespace ClientApp
             // Cho phép chọn nhiều file trong hàng đợi
             lvDownloads.MultiSelect = true;
             lvDownloads.HideSelection = false;
+
+            // Quét khối (rubber-band select) ngay cả khi bắt đầu kéo từ trên 1 dòng,
+            // không bắt buộc phải giữ Ctrl rồi click từng file.
+            lvDownloads.MouseDown += lvDownloads_MouseDown;
+            lvDownloads.MouseMove += lvDownloads_MouseMove;
+            lvDownloads.MouseUp += lvDownloads_MouseUp;
 
             // === Tạo nút "Mở thư mục" ===
             Button btnOpenFolder = new Button
@@ -66,18 +81,10 @@ namespace ClientApp
 
         private async void btnConnect_Click(object sender, EventArgs e)
         {
+            // Nếu đang kết nối -> Thực hiện ngắt kết nối
             if (_isConnected)
             {
-                _clientService = null;
-                _downloadService = null;
-
-                SetConnectionState(false);
-
-                lstServerFiles.Items.Clear();
-
-                UpdateButtonStates();
-                UpdateStatusBar();
-
+                DisconnectClient();
                 return;
             }
 
@@ -96,22 +103,10 @@ namespace ClientApp
                 return;
             }
 
-            if (!int.TryParse(portText, out int port))
+            if (!int.TryParse(portText, out int port) || port < 1 || port > 65535)
             {
                 MessageBox.Show(
-                    "Port không hợp lệ.",
-                    "Lỗi",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-
-                txtPort.Focus();
-                return;
-            }
-
-            if (port < 1 || port > 65535)
-            {
-                MessageBox.Show(
-                    "Port phải nằm trong khoảng 1 - 65535.",
+                    "Port không hợp lệ. Vui lòng nhập trong khoảng 1 - 65535.",
                     "Lỗi",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
@@ -126,11 +121,9 @@ namespace ClientApp
 
                 _clientService = new TcpClientService(ip, port);
 
-                List<FileItem> files =
-                    await _clientService.GetFileListAsync();
+                List<FileItem> files = await _clientService.GetFileListAsync();
 
-                _downloadService =
-                    new DownloadService(_clientService, 3);
+                _downloadService = new DownloadService(_clientService, 3);
 
                 lstServerFiles.Items.Clear();
 
@@ -140,18 +133,10 @@ namespace ClientApp
                 }
 
                 SetConnectionState(true);
-
-                UpdateButtonStates();
-                UpdateStatusBar();
             }
             catch (Exception ex)
             {
-                _clientService = null;
-                _downloadService = null;
-
-                SetConnectionState(false);
-
-                lstServerFiles.Items.Clear();
+                DisconnectClient();
 
                 MessageBox.Show(
                     "Không thể kết nối đến Server.\n\n" +
@@ -165,7 +150,27 @@ namespace ClientApp
             {
                 btnConnect.Enabled = true;
                 UpdateButtonStates();
+                UpdateStatusBar();
             }
+        }
+
+        // Hàm hỗ trợ dọn dẹp kết nối an toàn
+        private void DisconnectClient()
+        {
+            try
+            {
+                _clientService?.Disconnect();
+            }
+            catch { }
+
+            _clientService = null;
+            _downloadService = null;
+
+            SetConnectionState(false);
+            lstServerFiles.Items.Clear();
+
+            UpdateButtonStates();
+            UpdateStatusBar();
         }
 
         private void SetConnectionState(bool connected)
@@ -203,16 +208,16 @@ namespace ClientApp
         }
 
         // ── Refresh server file list ───────────────────────────────────
-            private async void btnRefresh_Click(object sender, EventArgs e)
+        private async void btnRefresh_Click(object sender, EventArgs e)
         {
-            if (!_isConnected || _clientService == null)
+            if (!IsClientConnected())
             {
+                DisconnectClient();
                 MessageBox.Show(
-                    "Vui lòng kết nối đến server trước.",
+                    "Chưa kết nối hoặc kết nối đến Server đã bị ngắt.",
                     "Thông báo",
                     MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-
+                    MessageBoxIcon.Warning);
                 return;
             }
 
@@ -220,8 +225,7 @@ namespace ClientApp
             {
                 btnRefresh.Enabled = false;
 
-                List<FileItem> files =
-                    await _clientService.GetFileListAsync();
+                List<FileItem> files = await _clientService!.GetFileListAsync();
 
                 lstServerFiles.Items.Clear();
 
@@ -229,28 +233,19 @@ namespace ClientApp
                 {
                     lstServerFiles.Items.Add(file);
                 }
-
-                UpdateButtonStates();
             }
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    "Không thể cập nhật danh sách file.\n\n" +
-                    ex.Message,
+                    "Không thể cập nhật danh sách file.\n\n" + ex.Message,
                     "Lỗi",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
 
-                _clientService = null;
-                _downloadService = null;
-
-                SetConnectionState(false);
-
-                lstServerFiles.Items.Clear();
+                DisconnectClient();
             }
             finally
             {
-                btnRefresh.Enabled = _isConnected;
                 UpdateButtonStates();
             }
         }
@@ -322,28 +317,43 @@ namespace ClientApp
         // ── Start download ─────────────────────────────────────────────
         private async void btnDownload_Click(object sender, EventArgs e)
         {
-            if (!_isConnected || _downloadService == null)
+            // 1. Kiểm tra kết nối trước khi tải
+            if (!IsClientConnected())
             {
+                DisconnectClient();
                 MessageBox.Show(
-                    "Vui lòng kết nối đến Server trước.",
-                    "Thông báo",
+                    "Không thể tải file! Chưa kết nối hoặc kết nối tới Server đã bị ngắt.",
+                    "Lỗi kết nối",
                     MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-
+                    MessageBoxIcon.Warning);
                 return;
             }
 
-            List<DownloadItem> queue =
-                _queueService.GetQueue();
+            // Yêu cầu phải chọn ít nhất 1 file trong hàng đợi trước khi tải.
+            if (lvDownloads.SelectedItems.Count == 0)
+            {
+                MessageBox.Show(
+                    "Chưa chọn file nào để tải. Vui lòng chọn ít nhất 1 file trong hàng đợi.",
+                    "Thông báo",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            List<DownloadItem> queue = lvDownloads.SelectedItems
+                .Cast<ListViewItem>()
+                .Select(lvi => lvi.Tag as DownloadItem)
+                .Where(d => d != null)
+                .Cast<DownloadItem>()
+                .ToList();
 
             if (queue.Count == 0)
             {
                 MessageBox.Show(
-                    "Hàng đợi đang trống.",
+                    "Hàng đợi đang trống. Vui lòng chọn file để thêm vào hàng đợi trước.",
                     "Thông báo",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
-
                 return;
             }
 
@@ -357,55 +367,83 @@ namespace ClientApp
 
                 RefreshDownloadView();
 
-                // TẢI TUẦN TỰ TỪNG FILE
+                // TẢI TUẦN TỰ TỪNG FILE (đã chọn, hoặc toàn bộ nếu không chọn)
                 foreach (DownloadItem item in queue)
                 {
-                    await _downloadService.ExecuteDownloadAsync(item);
+                    // Kiểm tra kết nối lại trước mỗi file
+                    if (!IsClientConnected())
+                    {
+                        MessageBox.Show(
+                            "Kết nối tới Server đã bị ngắt! Quá trình tải xuống tạm dừng.",
+                            "Mất kết nối",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Error);
+
+                        DisconnectClient();
+                        break;
+                    }
+
+                    try
+                    {
+                        await _downloadService!.ExecuteDownloadAsync(item);
+                    }
+                    catch (Exception ex)
+                    {
+                        item.Status = "Lỗi";
+                        MessageBox.Show(
+                            $"Lỗi khi tải file '{item.FileName}':\n{ex.Message}",
+                            "Lỗi tải file",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Error);
+
+                        if (!IsClientConnected())
+                        {
+                            DisconnectClient();
+                            break;
+                        }
+                    }
 
                     // Cập nhật UI sau mỗi file
                     RefreshDownloadView();
                     UpdateStatusBar();
                 }
 
-                MessageBox.Show(
-                    "Đã xử lý xong hàng đợi tải xuống.",
-                    "Download",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+                if (_isConnected)
+                {
+                    MessageBox.Show(
+                        "Đã xử lý xong hàng đợi tải xuống.",
+                        "Download",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
             }
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    "Có lỗi trong quá trình tải xuống.\n\n" +
-                    ex.Message,
+                    "Có lỗi xảy ra trong quá trình tải xuống.\n\n" + ex.Message,
                     "Lỗi",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
             finally
             {
-                btnDownload.Enabled =
-                    _isConnected &&
-                    _queueService.GetQueue().Count > 0;
-
-                btnAdd.Enabled =
-                    _isConnected &&
-                    lstServerFiles.SelectedItems.Count > 0;
-
-                btnRemove.Enabled =
-                    lvDownloads.SelectedItems.Count > 0;
-
-                btnRefresh.Enabled =
-                    _isConnected;
-
                 UpdateButtonStates();
                 UpdateStatusBar();
             }
         }
+
+        // Helper kiểm tra trạng thái kết nối thực tế (đã sửa lỗi cú pháp 2 dấu ';')
+        private bool IsClientConnected()
+        {
+            return _isConnected
+                && _clientService != null
+                && _downloadService != null
+                && _clientService.IsConnected;
+        }
+
         // ── Refresh ListView ───────────────────────────────────────────
         private void RefreshDownloadView()
         {
-            // Sync hidden lstDownloadQueue (để tương thích với _queueService)
             lstDownloadQueue.Items.Clear();
 
             lvDownloads.BeginUpdate();
@@ -437,17 +475,8 @@ namespace ClientApp
             "Đang tải" => ClrDownloading,
             "Hoàn thành" => ClrCompleted,
             "Lỗi" => ClrError,
-
             _ => ClrPending
         };
-
-        private static string FormatSize(long bytes)
-        {
-            if (bytes >= 1_073_741_824) return $"{bytes / 1_073_741_824.0:F1} GB";
-            if (bytes >= 1_048_576) return $"{bytes / 1_048_576.0:F1} MB";
-            if (bytes >= 1_024) return $"{bytes / 1_024.0:F1} KB";
-            return $"{bytes} B";
-        }
 
         // ── UI state helpers ───────────────────────────────────────────
         private void UpdateButtonStates()
@@ -473,14 +502,12 @@ namespace ClientApp
         private void lvDownloads_SelectedIndexChanged(object sender, EventArgs e)
             => UpdateButtonStates();
 
-        // Double-click on server file → add to queue
         private void lstServerFiles_DoubleClick(object sender, EventArgs e)
         {
             if (lstServerFiles.SelectedItems.Count > 0)
                 btnAdd_Click(sender, e);
         }
 
-        // Keyboard shortcuts
         private void MainForm_KeyDown(object sender, KeyEventArgs e)
         {
             switch (e.KeyCode)
@@ -500,14 +527,64 @@ namespace ClientApp
             }
         }
 
-        // Resize → keep right-aligned buttons flush to panel edge
         private void pnlServerBtns_Resize(object sender, EventArgs e)
             => btnAdd.Location = new Point(pnlServerBtns.Width - btnAdd.Width, 8);
 
         private void pnlQueueBtns_Resize(object sender, EventArgs e)
             => btnDownload.Location = new Point(pnlQueueBtns.Width - btnDownload.Width, 8);
 
-        // Legacy stubs (kept for compatibility)
+        // ── Quét khối (rubber-band select) cho lvDownloads ────────────
+        // ListView mặc định chỉ quét khối được khi bắt đầu kéo từ vùng trống.
+        // 3 handler dưới đây cho phép bắt đầu kéo ngay trên 1 dòng và tự
+        // chọn/bỏ chọn các dòng giao với vùng đang kéo qua — không cần giữ Ctrl.
+        private void lvDownloads_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+
+            _dragStartPoint = e.Location;
+            _isDragSelecting = true;
+        }
+
+        private void lvDownloads_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_isDragSelecting || e.Button != MouseButtons.Left) return;
+
+            Rectangle selectionRect = NormalizeRectangle(_dragStartPoint, e.Location);
+
+            // Bỏ qua những cú click đơn thuần (chưa thực sự kéo)
+            if (selectionRect.Width < 4 && selectionRect.Height < 4) return;
+
+            bool additive = ModifierKeys.HasFlag(Keys.Control) || ModifierKeys.HasFlag(Keys.Shift);
+
+            foreach (ListViewItem item in lvDownloads.Items)
+            {
+                bool intersects = selectionRect.IntersectsWith(item.Bounds);
+
+                if (intersects)
+                {
+                    item.Selected = true;
+                }
+                else if (!additive)
+                {
+                    item.Selected = false;
+                }
+            }
+        }
+
+        private void lvDownloads_MouseUp(object sender, MouseEventArgs e)
+        {
+            _isDragSelecting = false;
+        }
+
+        private static Rectangle NormalizeRectangle(Point p1, Point p2)
+        {
+            int x = Math.Min(p1.X, p2.X);
+            int y = Math.Min(p1.Y, p2.Y);
+            int width = Math.Abs(p1.X - p2.X);
+            int height = Math.Abs(p1.Y - p2.Y);
+            return new Rectangle(x, y, width, height);
+        }
+
         private void label1_Click(object sender, EventArgs e) { }
         private void button2_Click(object sender, EventArgs e) => btnAdd_Click(sender, e);
     }

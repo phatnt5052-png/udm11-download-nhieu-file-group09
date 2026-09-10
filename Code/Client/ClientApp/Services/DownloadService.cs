@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,7 +13,7 @@ namespace ClientApp.Services
         private readonly string _downloadFolder;
         private readonly SemaphoreSlim _semaphore;
 
-        // Quy tắc xử lý khi file trùng tên (Có thể mở rộng tùy chọn)
+        // Quy tắc xử lý khi file trùng tên
         public enum OverwriteRule { Overwrite, Rename }
         public OverwriteRule TargetRule { get; set; } = OverwriteRule.Rename;
 
@@ -28,7 +29,7 @@ namespace ClientApp.Services
             }
         }
 
-        public async Task ExecuteDownloadAsync(DownloadItem item)
+        public async Task ExecuteDownloadAsync(DownloadItem item, Action<DownloadItem>? onProgress = null)
         {
             await _semaphore.WaitAsync();
             item.Status = DownloadStatus.Downloading;
@@ -36,21 +37,19 @@ namespace ClientApp.Services
 
             try
             {
-                // Giữ tên file gốc để gửi cho server
+                // Lưu tên file gốc để yêu cầu đúng file từ Server
                 string originalFileName = item.FileName;
+                string targetFilePath = Path.Combine(_downloadFolder, originalFileName);
 
-                string targetFilePath = Path.Combine(_downloadFolder, item.FileName);
                 if (File.Exists(targetFilePath))
                 {
                     if (TargetRule == OverwriteRule.Rename)
                     {
-                        string ext = Path.GetExtension(item.FileName);
-                        string nameWithoutExt = Path.GetFileNameWithoutExtension(item.FileName);
+                        string ext = Path.GetExtension(originalFileName);
+                        string nameWithoutExt = Path.GetFileNameWithoutExtension(originalFileName);
                         string uniqueName = $"{nameWithoutExt}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
                         targetFilePath = Path.Combine(_downloadFolder, uniqueName);
-                        // NƠI NÀY CHỈ ĐỔI LOCAL PATH, KHÔNG ĐỔI item.FileName
-                        // item.FileName vẫn giữ tên gốc để gửi cho server
-
+                        item.FileName = uniqueName; // Cập nhật tên hiển thị mới trên giao diện
                     }
                     else if (TargetRule == OverwriteRule.Overwrite)
                     {
@@ -58,40 +57,45 @@ namespace ClientApp.Services
                     }
                 }
 
-                // Download file từ server - GỬI TÊN FILE GỐC
+                // Tải file từ Server bằng tên file gốc
                 await _clientService.DownloadFileFromServerAsync(originalFileName, async (networkStream, size) =>
                 {
                     using var fileStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write, FileShare.None);
                     byte[] buffer = new byte[8192];
                     long totalBytesRead = 0;
-                    int bytesRead;
 
-                    while ((bytesRead = await networkStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                    // ĐỌC ĐÚNG SỐ BYTE CỦA FILE (KHÔNG CHỜ EOF ĐỂ TRÁNH TREO)
+                    while (totalBytesRead < size)
                     {
+                        int bytesToRead = (int)Math.Min(buffer.Length, size - totalBytesRead);
+                        int bytesRead = await networkStream.ReadAsync(buffer, 0, bytesToRead);
+
+                        if (bytesRead == 0)
+                        {
+                            throw new IOException("Server ngắt kết nối đột ngột khi chưa gửi đủ file.");
+                        }
+
                         await fileStream.WriteAsync(buffer, 0, bytesRead);
                         totalBytesRead += bytesRead;
-                        progressService.UpdateProgress(totalBytesRead);
-                    }
 
-                    // Verify file size matches
-                    if (totalBytesRead != size)
-                    {
-                        throw new IOException($"Kích thước file không khớp. Nhận: {totalBytesRead}, Mong đợi: {size}");
+                        // Cập nhật tiến độ dữ liệu
+                        progressService.UpdateProgress(totalBytesRead);
+
+                        // Báo UI cập nhật tiến trình realtime
+                        onProgress?.Invoke(item);
                     }
                 });
 
-                // Update UI với tên file được lưu
-                item.FileName = Path.GetFileName(targetFilePath);
                 item.Status = DownloadStatus.Completed;
                 item.Progress = 100;
                 item.SpeedMbps = 0;
+                onProgress?.Invoke(item);
             }
-            catch (Exception ex)
+            catch
             {
                 item.Status = DownloadStatus.Failed;
                 item.SpeedMbps = 0;
-                // Log error nếu cần
-                System.Diagnostics.Debug.WriteLine($"Download Failed: {ex.Message}");
+                onProgress?.Invoke(item);
             }
             finally
             {
@@ -99,14 +103,14 @@ namespace ClientApp.Services
             }
         }
 
-        public async Task StartAllAsync(DownloadQueueService queueService)
+        public async Task StartAllAsync(DownloadQueueService queueService, Action<DownloadItem>? onProgress = null)
         {
             var items = queueService.GetQueue();
             var tasks = new List<Task>();
 
             foreach (var item in items)
             {
-                tasks.Add(ExecuteDownloadAsync(item));
+                tasks.Add(ExecuteDownloadAsync(item, onProgress));
             }
             await Task.WhenAll(tasks);
         }
