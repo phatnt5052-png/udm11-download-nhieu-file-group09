@@ -223,6 +223,13 @@ namespace ClientApp
         }
 
         // ── Connection monitor (phát hiện chủ động mất kết nối) ──────────
+        private static bool FileListsEqual(IEnumerable<FileItem> a, IEnumerable<FileItem> b)
+        {
+            var listA = a.Select(f => (f.FileName, f.FileSize)).OrderBy(x => x.FileName).ToList();
+            var listB = b.Select(f => (f.FileName, f.FileSize)).OrderBy(x => x.FileName).ToList();
+            return listA.SequenceEqual(listB);
+        }
+
         private async void ConnectionMonitorTimer_Tick(object? sender, EventArgs e)
         {
             // Bỏ qua nếu: đang không kết nối, đang tải file, hoặc lần kiểm tra
@@ -238,11 +245,31 @@ namespace ClientApp
             {
                 List<FileItem> files = await _clientService.GetFileListAsync();
 
-                // Vẫn còn kết nối được -> đồng bộ lại danh sách file mới nhất
-                lstServerFiles.Items.Clear();
-                foreach (FileItem file in files)
+                // Chỉ cập nhật UI khi danh sách file THỰC SỰ thay đổi — tránh
+                // Clear() + add lại liên tục mỗi 5 giây gây nhấp nháy dù
+                // không có gì thay đổi trên Server.
+                if (!FileListsEqual(lstServerFiles.Items.Cast<FileItem>(), files))
                 {
-                    lstServerFiles.Items.Add(file);
+                    // Ghi nhớ các file đang được chọn để chọn lại sau khi refresh
+                    var selectedNames = lstServerFiles.SelectedItems
+                        .Cast<FileItem>()
+                        .Select(f => f.FileName)
+                        .ToHashSet();
+
+                    lstServerFiles.BeginUpdate();
+                    lstServerFiles.Items.Clear();
+
+                    foreach (FileItem file in files)
+                    {
+                        int index = lstServerFiles.Items.Add(file);
+
+                        if (selectedNames.Contains(file.FileName))
+                        {
+                            lstServerFiles.SetSelected(index, true);
+                        }
+                    }
+
+                    lstServerFiles.EndUpdate();
                 }
             }
             catch
@@ -468,7 +495,7 @@ namespace ClientApp
                 if (_isConnected)
                 {
                     MessageBox.Show(
-                        "Đã tải file thành công.",
+                        "Đã tải xong tất cả các file.",
                         "Download",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information);
