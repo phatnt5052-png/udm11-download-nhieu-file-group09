@@ -66,6 +66,7 @@ namespace ClientApp
         private readonly System.Windows.Forms.Timer _connectionMonitorTimer = new() { Interval = 5000 };
         private readonly System.Windows.Forms.Timer _progressRefreshTimer = new() { Interval = 300 };
         private bool _isMonitorTicking = false;
+        private DateTime? _serverDisconnectedAt;
 
         // ── Constructor ────────────────────────────────────────────────
         public MainForm()
@@ -444,6 +445,8 @@ namespace ClientApp
                 List<FileItem> files = await _clientService.GetFileListAsync();
                 _downloadService = new DownloadService(_clientService, 3);
 
+                _serverDisconnectedAt = null;
+
                 _isConnected = true;
                 UpdateConnectionUi();
                 _connectionMonitorTimer.Start();
@@ -792,19 +795,61 @@ namespace ClientApp
         // ══════════════════════════════════════════════════════════════
         private async void ConnectionMonitorTimer_Tick(object? sender, EventArgs e)
         {
-            if (!_isConnected || _isDownloadInProgress || _isMonitorTicking || _clientService == null) return;
+            if (!_isConnected ||
+                _isDownloadInProgress ||
+                _isMonitorTicking ||
+                _clientService == null)
+                return;
 
             _isMonitorTicking = true;
 
             try
             {
                 List<FileItem> files = await _clientService.GetFileListAsync();
+
+                // Server vẫn hoạt động hoặc đã kết nối lại
+                _serverDisconnectedAt = null;
+
                 SyncGridWithServerFiles(files);
             }
             catch
             {
+                // Lần đầu phát hiện Server mất kết nối
+                if (_serverDisconnectedAt == null)
+                {
+                    _serverDisconnectedAt = DateTime.Now;
+
+                    MessageBox.Show(
+                        "Mất tín hiệu kết nối với server.",
+                        "Mất kết nối",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+
+                    return;
+                }
+
+                // Tính thời gian kể từ lúc phát hiện mất kết nối
+                TimeSpan disconnectedTime =
+                    DateTime.Now - _serverDisconnectedAt.Value;
+
+                // Chưa đủ 25 giây -> tiếp tục chờ
+                if (disconnectedTime.TotalSeconds < 25)
+                {
+                    return;
+                }
+
+                // Chờ khoảng 25 giây Server vẫn chưa kết nối lại
+                MessageBox.Show(
+                    "Không thể kết nối lại với Server.\n\n" +
+                    "Client sẽ đóng ứng dụng.",
+                    "Mất kết nối Server",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+
                 DisconnectClient();
-                MessageBox.Show("Mất kết nối tới Server (Server có thể đã dừng).", "Mất kết nối", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+                // Đóng Client
+                Close();
             }
             finally
             {
