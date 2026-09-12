@@ -444,11 +444,13 @@ namespace ClientApp
                 List<FileItem> files = await _clientService.GetFileListAsync();
                 _downloadService = new DownloadService(_clientService, 3);
 
-                SyncGridWithServerFiles(files);
-
                 _isConnected = true;
                 UpdateConnectionUi();
                 _connectionMonitorTimer.Start();
+
+                MessageBox.Show("Đã kết nối tới server", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                await ShowServerFilesDialogAsync();
             }
             catch (Exception ex)
             {
@@ -512,7 +514,7 @@ namespace ClientApp
         }
 
         // ══════════════════════════════════════════════════════════════
-        //  XEM TOÀN BỘ FILE TRÊN SERVER (CẢI TIẾN: DATAGRIDVIEW + CHỌN TẤT CẢ)
+        //  XEM TOÀN BỘ FILE TRÊN SERVER (CHỌN FILE ĐƯA VÀO HÀNG ĐỢI)
         // ══════════════════════════════════════════════════════════════
         private async System.Threading.Tasks.Task ShowServerFilesDialogAsync()
         {
@@ -555,14 +557,13 @@ namespace ClientApp
 
             var lblHint = new Label
             {
-                Text = "Tích chọn ô, click dòng hoặc quét khối các file muốn thêm (lại) vào hàng đợi tải:",
+                Text = "Tích chọn ô, click dòng hoặc quét khối các file muốn thêm vào hàng đợi tải:",
                 Dock = DockStyle.Top,
                 Height = 36,
                 Padding = new Padding(12, 10, 12, 0),
                 ForeColor = Color.FromArgb(60, 60, 60)
             };
 
-            // Dùng DataGridView tạo các ô phân biệt & cho phép quét khối chọn nhiều dòng
             var dgvDialog = new DataGridView
             {
                 Dock = DockStyle.Fill,
@@ -637,13 +638,23 @@ namespace ClientApp
                 }
             }
 
-            // Click vào bất kỳ đâu trên dòng sẽ tự động đảo trạng thái ô checkbox
+            // SỬA ĐỔI QUAN TRỌNG 1: Commit thay đổi CheckBox ngay lập tức khi người dùng tick vào ô CheckBox
+            dgvDialog.CurrentCellDirtyStateChanged += (s, e) =>
+            {
+                if (dgvDialog.IsCurrentCellDirty && dgvDialog.CurrentCell is DataGridViewCheckBoxCell)
+                {
+                    dgvDialog.CommitEdit(DataGridViewDataErrorContexts.Commit);
+                }
+            };
+
+            // SỬA ĐỔI QUAN TRỌNG 2: Tự động đảo trạng thái CheckBox khi click vào bất kỳ ô nào trên dòng (ngoại trừ ô checkbox)
             dgvDialog.CellClick += (s, e) =>
             {
                 if (e.RowIndex >= 0 && e.ColumnIndex != colChk.Index)
                 {
                     bool curVal = Convert.ToBoolean(dgvDialog.Rows[e.RowIndex].Cells[colChk.Index].Value);
                     dgvDialog.Rows[e.RowIndex].Cells[colChk.Index].Value = !curVal;
+                    dgvDialog.EndEdit();
                 }
             };
 
@@ -663,7 +674,6 @@ namespace ClientApp
                 Location = new Point(12, 10)
             };
 
-            // Đảo trạng thái chọn tất cả / bỏ chọn tất cả
             btnSelectAllDialog.Click += (s, e) =>
             {
                 bool anyUnchecked = dgvDialog.Rows.Cast<DataGridViewRow>().Any(r => !Convert.ToBoolean(r.Cells[colChk.Index].Value));
@@ -672,6 +682,7 @@ namespace ClientApp
                     row.Cells[colChk.Index].Value = anyUnchecked;
                     row.Selected = anyUnchecked;
                 }
+                dgvDialog.EndEdit();
             };
 
             var btnClose = new Button
@@ -723,6 +734,9 @@ namespace ClientApp
 
             if (dialog.ShowDialog(this) == DialogResult.OK)
             {
+                // SỬA ĐỔI QUAN TRỌNG 3: Chốt toàn bộ dữ liệu đang sửa trước khi đọc danh sách
+                dgvDialog.EndEdit();
+
                 int addedCount = 0;
 
                 foreach (DataGridViewRow row in dgvDialog.Rows)
@@ -730,7 +744,7 @@ namespace ClientApp
                     bool isChecked = Convert.ToBoolean(row.Cells[colChk.Index].Value);
                     bool isSelected = row.Selected;
 
-                    // Nhận diện file nếu ô được tick HOẶC dòng đang được quét khối chọn
+                    // Nhận diện file nếu ô được tích chọn HOẶC dòng đang được quét khối chọn
                     if ((isChecked || isSelected) && row.Tag is FileItem file)
                     {
                         _hiddenFiles.Remove(file.FileName);
@@ -811,14 +825,6 @@ namespace ClientApp
 
                 var row = dgv.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => (r.Tag as DownloadItem)?.FileName == staleName);
                 if (row != null) dgv.Rows.Remove(row);
-            }
-
-            foreach (FileItem file in serverFiles)
-            {
-                if (_items.ContainsKey(file.FileName)) continue;
-                if (_hiddenFiles.Contains(file.FileName)) continue;
-
-                AddFileRow(file);
             }
 
             UpdateSummary();
