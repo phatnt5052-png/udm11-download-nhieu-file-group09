@@ -1,6 +1,12 @@
+using System;
+using System.Drawing;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace ServerApp
 {
@@ -19,12 +25,8 @@ namespace ServerApp
         // FORM LOAD
         private void ServerMainForm_Load(object sender, EventArgs e)
         {
-            txtFolder.Text = Path.Combine(Application.StartupPath, "ServerFiles");
-
-            if (!Directory.Exists(txtFolder.Text))
-            {
-                Directory.CreateDirectory(txtFolder.Text);
-            }
+            // Mặc định để trống để người dùng tự chọn thư mục
+            txtFolder.Text = string.Empty;
 
             RefreshFileList();
 
@@ -34,7 +36,7 @@ namespace ServerApp
             btnStart.Enabled = true;
             btnStop.Enabled = false;
 
-            AddLog("Server đã sẵn sàng.");
+            AddLog("Server đã sẵn sàng. Vui lòng chọn thư mục chứa file.");
         }
 
         // CHỌN THƯ MỤC
@@ -44,7 +46,7 @@ namespace ServerApp
 
             dialog.Description = "Chọn thư mục chứa file trên Server";
 
-            if (Directory.Exists(txtFolder.Text))
+            if (!string.IsNullOrWhiteSpace(txtFolder.Text) && Directory.Exists(txtFolder.Text))
             {
                 dialog.SelectedPath = txtFolder.Text;
             }
@@ -73,14 +75,9 @@ namespace ServerApp
 
                 string folder = txtFolder.Text.Trim();
 
-                if (string.IsNullOrWhiteSpace(folder))
+                if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
                 {
                     return;
-                }
-
-                if (!Directory.Exists(folder))
-                {
-                    Directory.CreateDirectory(folder);
                 }
 
                 string[] files = Directory.GetFiles(
@@ -119,6 +116,20 @@ namespace ServerApp
                 return;
             }
 
+            string folder = txtFolder.Text.Trim();
+
+            // Ràng buộc yêu cầu chọn thư mục trước khi chạy Server
+            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+            {
+                MessageBox.Show(
+                    "Vui lòng chọn thư mục chứa file trước khi chạy Server!",
+                    "Cảnh báo",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning
+                );
+                return;
+            }
+
             if (!int.TryParse(txtPort.Text.Trim(), out int port))
             {
                 MessageBox.Show(
@@ -145,13 +156,6 @@ namespace ServerApp
 
             try
             {
-                string folder = txtFolder.Text.Trim();
-
-                if (!Directory.Exists(folder))
-                {
-                    Directory.CreateDirectory(folder);
-                }
-
                 RefreshFileList();
 
                 cancellationTokenSource = new CancellationTokenSource();
@@ -276,7 +280,7 @@ namespace ServerApp
                             if (string.IsNullOrWhiteSpace(fileName))
                             {
                                 await WriteStringAsync(
-stream,
+                                    stream,
                                     "ERROR"
                                 );
 
@@ -339,7 +343,7 @@ stream,
             {
                 string folder = txtFolder.Text.Trim();
 
-                if (!Directory.Exists(folder))
+                if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
                 {
                     await WriteInt32Async(stream, 0);
                     return;
@@ -363,7 +367,7 @@ stream,
                     await WriteInt64Async(
                         stream,
                         file.Length
-);
+                    );
                 }
 
                 AddLog(
@@ -469,7 +473,7 @@ stream,
 
                 using FileStream fileStream =
                     new FileStream(
-fullPath,
+                        fullPath,
                         FileMode.Open,
                         FileAccess.Read,
                         FileShare.Read,
@@ -566,7 +570,7 @@ fullPath,
             byte[] data = Encoding.UTF8.GetBytes(text);
 
             await WriteInt32Async(
-stream,
+                stream,
                 data.Length
             );
 
@@ -677,7 +681,7 @@ stream,
                 if (read == 0)
                 {
                     throw new IOException(
-"Connection đã bị đóng."
+                        "Connection đã bị đóng."
                     );
                 }
 
