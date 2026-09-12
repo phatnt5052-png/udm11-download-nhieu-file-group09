@@ -11,119 +11,428 @@ namespace ClientApp
 {
     public partial class MainForm : Form
     {
-        // ── State ──────────────────────────────────────────────────────
-        private readonly DownloadQueueService _queueService = new();
+        // ── Colors ─────────────────────────────────────────────────────
+        private static readonly Color ClrBrand = Color.FromArgb(41, 128, 185);
+        private static readonly Color ClrGreen = Color.FromArgb(39, 174, 96);
+        private static readonly Color ClrRed = Color.FromArgb(192, 57, 43);
+        private static readonly Color ClrGray = Color.FromArgb(127, 140, 141);
+        private static readonly Color ClrBlue = Color.FromArgb(52, 152, 219);
+        private static readonly Color ClrRowError = Color.FromArgb(250, 219, 216);
+
+        // ── Services ───────────────────────────────────────────────────
         private TcpClientService? _clientService;
         private DownloadService? _downloadService;
         private bool _isConnected = false;
         private bool _isDownloadInProgress = false;
+        private System.Threading.CancellationTokenSource? _downloadCts;
 
-        // Kiểm tra định kỳ xem Server có còn phản hồi không, để phát hiện
-        // chủ động việc mất kết nối (vd. Server bị Stop) thay vì phải đợi
-        // người dùng bấm Refresh/Tải mới biết.
-        private readonly System.Windows.Forms.Timer _connectionMonitorTimer = new()
-        {
-            Interval = 5000 // 5 giây
-        };
+        private readonly Dictionary<string, DownloadItem> _items = new();
+        private readonly HashSet<string> _hiddenFiles = new();
+
+        // ── Controls Top ───────────────────────────────────────────────
+        private Panel pnlTop = null!;
+        private Label lblBrand = null!;
+        private Label lblIp = null!;
+        private Label lblPort = null!;
+        private TextBox txtServerIp = null!;
+        private TextBox txtPort = null!;
+        private Button btnConnect = null!;
+        private Button btnDisconnect = null!;
+        private Button btnTestConnection = null!;
+        private Button btnOpenFolder = null!;
+        private Button btnViewServerFiles = null!;
+        private Label lblStatusDot = null!;
+        private Label lblStatusText = null!;
+
+        // ── Controls Grid & Bottom ─────────────────────────────────────
+        private DataGridView dgv = null!;
+        private DataGridViewTextBoxColumn colType = null!;
+        private DataGridViewTextBoxColumn colName = null!;
+        private DataGridViewTextBoxColumn colSize = null!;
+        private DataGridViewTextBoxColumn colStatus = null!;
+        private DataGridViewTextBoxColumn colProgress = null!;
+        private DataGridViewTextBoxColumn colTransferred = null!;
+        private DataGridViewTextBoxColumn colSpeed = null!;
+        private DataGridViewButtonColumn colRetry = null!;
+        private DataGridViewButtonColumn colDelete = null!;
+
+        private Label lblSummary = null!;
+        private Button btnSelectAll = null!;
+        private Button btnDeleteSelected = null!;
+        private Button btnDeleteAll = null!;
+        private Button btnRetryFailed = null!;
+        private Button btnDownloadSelected = null!;
+
+        private readonly System.Windows.Forms.Timer _connectionMonitorTimer = new() { Interval = 5000 };
+        private readonly System.Windows.Forms.Timer _progressRefreshTimer = new() { Interval = 300 };
         private bool _isMonitorTicking = false;
-
-        // ── Drag-select (quét khối) state cho lvDownloads ────────────────
-        private Point _dragStartPoint;
-        private bool _isDragSelecting = false;
-
-        // ── Status row colors ──────────────────────────────────────────
-        private static readonly Color ClrPending = Color.FromArgb(250, 251, 252);
-        private static readonly Color ClrDownloading = Color.FromArgb(214, 234, 248);
-        private static readonly Color ClrCompleted = Color.FromArgb(213, 245, 227);
-        private static readonly Color ClrError = Color.FromArgb(250, 219, 216);
 
         // ── Constructor ────────────────────────────────────────────────
         public MainForm()
         {
             InitializeComponent();
-        }
-
-        private void MainForm_Load(object sender, EventArgs e)
-        {
-            // Cho phép chọn nhiều file Server
-            lstServerFiles.SelectionMode = SelectionMode.MultiExtended;
-
-            // Cho phép chọn nhiều file trong hàng đợi
-            lvDownloads.MultiSelect = true;
-            lvDownloads.HideSelection = false;
-
-            // Quét khối (rubber-band select) ngay cả khi bắt đầu kéo từ trên 1 dòng,
-            // không bắt buộc phải giữ Ctrl rồi click từng file.
-            lvDownloads.MouseDown += lvDownloads_MouseDown;
-            lvDownloads.MouseMove += lvDownloads_MouseMove;
-            lvDownloads.MouseUp += lvDownloads_MouseUp;
+            BuildUi();
 
             _connectionMonitorTimer.Tick += ConnectionMonitorTimer_Tick;
+            _progressRefreshTimer.Tick += (s, e) => RefreshAllRowVisuals();
 
-            // === Tạo nút "Mở thư mục" ===
-            Button btnOpenFolder = new Button
+            UpdateConnectionUi();
+            UpdateSummary();
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  UI CONSTRUCTION
+        // ══════════════════════════════════════════════════════════════
+        private void BuildUi()
+        {
+            // ── Top bar ───────────────────────────────────────────────
+            pnlTop = new Panel { Dock = DockStyle.Top, Height = 64, BackColor = Color.White };
+
+            lblBrand = new Label
             {
-                Text = "📁  Mở",
+                Text = "⬇  UDM_11 MultiFileDownload",
+                Font = new Font("Segoe UI", 12f, FontStyle.Bold),
+                ForeColor = ClrBrand,
+                AutoSize = true
+            };
+
+            lblIp = new Label { Text = "IP:", AutoSize = true };
+            txtServerIp = new TextBox { Text = "127.0.0.1", Width = 100 };
+
+            lblPort = new Label { Text = "Port:", AutoSize = true };
+            txtPort = new TextBox { Text = "5000", Width = 55 };
+
+            btnConnect = new Button
+            {
+                Text = "Kết nối",
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Padding(10, 0, 10, 0),
+                Height = 30,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = ClrBlue,
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand
+            };
+            btnConnect.FlatAppearance.BorderColor = ClrBlue;
+            btnConnect.Click += btnConnect_Click;
+
+            btnDisconnect = new Button
+            {
+                Text = "Ngắt kết nối",
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Padding(10, 0, 10, 0),
+                Height = 30,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = ClrRed,
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand
+            };
+            btnDisconnect.FlatAppearance.BorderColor = ClrRed;
+            btnDisconnect.Click += (s, e) => DisconnectClient();
+
+            btnTestConnection = new Button
+            {
+                Text = "Test kết nối",
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Padding(10, 0, 10, 0),
+                Height = 30,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(149, 165, 166),
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand
+            };
+            btnTestConnection.FlatAppearance.BorderColor = Color.FromArgb(149, 165, 166);
+            btnTestConnection.Click += async (s, e) => await TestConnectionAsync();
+
+            btnOpenFolder = new Button
+            {
+                Text = "Mở thư mục",
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Padding(10, 0, 10, 0),
+                Height = 30,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(155, 89, 182),
                 ForeColor = Color.White,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
-                Size = new Size(70, 32),
-                Location = new Point(5, 8),
                 Cursor = Cursors.Hand
             };
             btnOpenFolder.FlatAppearance.BorderColor = Color.FromArgb(155, 89, 182);
-            btnOpenFolder.Click += (s, e) => FolderHelper.OpenDownloadsFolder();
-            pnlServerBtns.Controls.Add(btnOpenFolder);
+            btnOpenFolder.Click += (s, e) =>
+            {
+                try { FolderHelper.OpenDownloadsFolder(); }
+                catch (Exception ex) { MessageBox.Show(ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+            };
 
-            // Cập nhật vị trí btnRefresh để không bị đè
-            btnRefresh.Location = new Point(80, 8);
+            btnViewServerFiles = new Button
+            {
+                Text = "Xem file trên Server",
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Padding(10, 0, 10, 0),
+                Height = 30,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(41, 128, 185),
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand
+            };
+            btnViewServerFiles.FlatAppearance.BorderColor = Color.FromArgb(41, 128, 185);
+            btnViewServerFiles.Click += async (s, e) => await ShowServerFilesDialogAsync();
 
-            btnAdd.Location = new Point(
-                pnlServerBtns.Width - btnAdd.Width,
-                8);
+            lblStatusDot = new Label { Text = "●", Font = new Font("Segoe UI", 12f), AutoSize = true, ForeColor = ClrGray };
+            lblStatusText = new Label { Text = "Chưa kết nối", AutoSize = true, ForeColor = ClrGray };
 
-            btnDownload.Location = new Point(
-                pnlQueueBtns.Width - btnDownload.Width,
-                8);
+            pnlTop.Controls.AddRange(new Control[]
+            {
+                lblBrand, lblIp, txtServerIp, lblPort, txtPort,
+                btnConnect, btnDisconnect, btnTestConnection, btnOpenFolder, btnViewServerFiles,
+                lblStatusDot, lblStatusText
+            });
 
-            UpdateButtonStates();
-            UpdateStatusBar();
+            pnlTop.Resize += (s, e) => LayoutTopControls();
+            LayoutTopControls();
+
+            var topBorder = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = Color.FromArgb(220, 220, 220) };
+
+            // ── Bottom bar ────────────────────────────────────────────
+            var pnlBottom = new Panel { Dock = DockStyle.Bottom, Height = 50, BackColor = Color.White };
+            var bottomBorder = new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = Color.FromArgb(220, 220, 220) };
+
+            lblSummary = new Label
+            {
+                AutoSize = false,
+                AutoEllipsis = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Location = new Point(16, 0),
+                Size = new Size(200, 50),
+                ForeColor = Color.FromArgb(80, 80, 80)
+            };
+
+            btnSelectAll = new Button
+            {
+                Text = "Chọn tất cả",
+                FlatStyle = FlatStyle.Flat,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Padding(10, 0, 10, 0),
+                Height = 30,
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                Cursor = Cursors.Hand
+            };
+            btnSelectAll.Click += (s, e) => ToggleSelectAll();
+
+            btnRetryFailed = new Button
+            {
+                Text = "↻ Thử lại",
+                FlatStyle = FlatStyle.Flat,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Padding(10, 0, 10, 0),
+                Height = 30,
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                Cursor = Cursors.Hand
+            };
+            btnRetryFailed.Click += async (s, e) => await DownloadItemsAsync(_items.Values.Where(i => i.Status == DownloadStatus.Failed).ToList());
+
+            btnDeleteSelected = new Button
+            {
+                Text = "Xóa",
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(230, 126, 34),
+                ForeColor = Color.White,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Padding(10, 0, 10, 0),
+                Height = 30,
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                Cursor = Cursors.Hand
+            };
+            btnDeleteSelected.FlatAppearance.BorderColor = Color.FromArgb(230, 126, 34);
+            btnDeleteSelected.Click += (s, e) => DeleteSelectedRows();
+
+            btnDeleteAll = new Button
+            {
+                Text = "Xóa tất cả",
+                FlatStyle = FlatStyle.Flat,
+                BackColor = ClrRed,
+                ForeColor = Color.White,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Padding(10, 0, 10, 0),
+                Height = 30,
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                Cursor = Cursors.Hand
+            };
+            btnDeleteAll.FlatAppearance.BorderColor = ClrRed;
+            btnDeleteAll.Click += (s, e) => DeleteAllRows();
+
+            btnDownloadSelected = new Button
+            {
+                Text = "Tải các file đã chọn",
+                FlatStyle = FlatStyle.Flat,
+                BackColor = ClrGreen,
+                ForeColor = Color.White,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Padding = new Padding(14, 0, 14, 0),
+                Height = 34,
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                Cursor = Cursors.Hand,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+            };
+            btnDownloadSelected.FlatAppearance.BorderColor = ClrGreen;
+            btnDownloadSelected.Click += async (s, e) =>
+            {
+                if (_isDownloadInProgress)
+                {
+                    _downloadCts?.Cancel();
+                }
+                else
+                {
+                    await btnDownloadSelected_Click();
+                }
+            };
+
+            pnlBottom.Controls.AddRange(new Control[] { lblSummary, btnSelectAll, btnDeleteSelected, btnDeleteAll, btnRetryFailed, btnDownloadSelected });
+            pnlBottom.Resize += (s, e) => LayoutBottomButtons(pnlBottom);
+            LayoutBottomButtons(pnlBottom);
+
+            // ── Grid ──────────────────────────────────────────────────
+            BuildGrid();
+
+            Controls.Add(dgv);
+            Controls.Add(bottomBorder);
+            Controls.Add(pnlBottom);
+            Controls.Add(topBorder);
+            Controls.Add(pnlTop);
         }
 
-        private async void btnConnect_Click(object sender, EventArgs e)
+        private void LayoutTopControls()
         {
-            // Nếu đang kết nối -> Thực hiện ngắt kết nối
-            if (_isConnected)
+            if (pnlTop == null || lblBrand == null) return;
+
+            int curX = 16;
+            int midY = pnlTop.Height / 2;
+
+            lblBrand.Location = new Point(curX, midY - lblBrand.PreferredSize.Height / 2);
+            curX = lblBrand.Right + 18;
+
+            lblIp.Location = new Point(curX, midY - lblIp.PreferredSize.Height / 2);
+            curX = lblIp.Right + 4;
+
+            txtServerIp.Location = new Point(curX, midY - txtServerIp.Height / 2);
+            curX = txtServerIp.Right + 14;
+
+            lblPort.Location = new Point(curX, midY - lblPort.PreferredSize.Height / 2);
+            curX = lblPort.Right + 4;
+
+            txtPort.Location = new Point(curX, midY - txtPort.Height / 2);
+            curX = txtPort.Right + 14;
+
+            Button[] topButtons = { btnConnect, btnDisconnect, btnTestConnection, btnOpenFolder, btnViewServerFiles };
+            foreach (var btn in topButtons)
             {
-                DisconnectClient();
-                return;
+                btn.Location = new Point(curX, midY - btn.Height / 2);
+                curX = btn.Right + 6;
             }
 
+            lblStatusDot.Location = new Point(curX + 8, midY - lblStatusDot.PreferredSize.Height / 2);
+            lblStatusText.Location = new Point(lblStatusDot.Right + 4, midY - lblStatusText.PreferredSize.Height / 2);
+        }
+
+        private void LayoutBottomButtons(Panel pnlBottom)
+        {
+            btnDownloadSelected.Location = new Point(pnlBottom.Width - btnDownloadSelected.Width - 16, 8);
+            btnRetryFailed.Location = new Point(btnDownloadSelected.Left - btnRetryFailed.Width - 8, 10);
+            btnDeleteAll.Location = new Point(btnRetryFailed.Left - btnDeleteAll.Width - 8, 10);
+            btnDeleteSelected.Location = new Point(btnDeleteAll.Left - btnDeleteSelected.Width - 8, 10);
+            btnSelectAll.Location = new Point(btnDeleteSelected.Left - btnSelectAll.Width - 8, 10);
+
+            int availableWidth = Math.Max(0, btnSelectAll.Left - lblSummary.Left - 12);
+            lblSummary.Size = new Size(availableWidth, pnlBottom.Height);
+        }
+
+        private void BuildGrid()
+        {
+            dgv = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                AutoGenerateColumns = false,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                AllowUserToResizeRows = false,
+                RowHeadersVisible = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = true,
+                BackgroundColor = Color.White,
+                BorderStyle = BorderStyle.None,
+                ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
+                ColumnHeadersHeight = 34,
+                RowTemplate = { Height = 30 },
+                EditMode = DataGridViewEditMode.EditProgrammatically
+            };
+
+            dgv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(245, 246, 248);
+            dgv.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            dgv.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(245, 246, 248);
+            dgv.ColumnHeadersDefaultCellStyle.SelectionForeColor = dgv.ColumnHeadersDefaultCellStyle.ForeColor;
+            dgv.EnableHeadersVisualStyles = false;
+            dgv.GridColor = Color.FromArgb(235, 235, 235);
+
+            Color softSelection = Color.FromArgb(225, 238, 250);
+            dgv.DefaultCellStyle.SelectionBackColor = softSelection;
+            dgv.DefaultCellStyle.SelectionForeColor = Color.Black;
+            dgv.RowsDefaultCellStyle.SelectionBackColor = softSelection;
+            dgv.RowsDefaultCellStyle.SelectionForeColor = Color.Black;
+            dgv.AlternatingRowsDefaultCellStyle.SelectionBackColor = softSelection;
+            dgv.AlternatingRowsDefaultCellStyle.SelectionForeColor = Color.Black;
+            dgv.RowsDefaultCellStyle.BackColor = Color.White;
+            dgv.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(250, 251, 252);
+
+            colType = new DataGridViewTextBoxColumn { HeaderText = "Loại", Width = 55, ReadOnly = true };
+            colName = new DataGridViewTextBoxColumn { HeaderText = "Tên file", ReadOnly = true, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill };
+            colSize = new DataGridViewTextBoxColumn { HeaderText = "Kích thước", Width = 90, ReadOnly = true };
+            colStatus = new DataGridViewTextBoxColumn { HeaderText = "Trạng thái", Width = 110, ReadOnly = true };
+            colProgress = new DataGridViewTextBoxColumn { HeaderText = "Tiến độ (%)", Width = 100, ReadOnly = true };
+            colTransferred = new DataGridViewTextBoxColumn { HeaderText = "Đã tải", Width = 150, ReadOnly = true };
+            colSpeed = new DataGridViewTextBoxColumn { HeaderText = "Tốc độ", Width = 90, ReadOnly = true };
+            colRetry = new DataGridViewButtonColumn { HeaderText = "", Text = "Thử lại", UseColumnTextForButtonValue = true, Width = 64, FlatStyle = FlatStyle.Flat };
+            colDelete = new DataGridViewButtonColumn { HeaderText = "", Text = "Xóa", UseColumnTextForButtonValue = true, Width = 50, FlatStyle = FlatStyle.Flat };
+
+            dgv.Columns.AddRange(colType, colName, colSize, colStatus, colProgress, colTransferred, colSpeed, colRetry, colDelete);
+
+            dgv.CellClick += Dgv_CellClick;
+            dgv.CellPainting += Dgv_CellPainting;
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  CONNECT / DISCONNECT
+        // ══════════════════════════════════════════════════════════════
+        private async void btnConnect_Click(object? sender, EventArgs e)
+        {
             string ip = txtServerIp.Text.Trim();
             string portText = txtPort.Text.Trim();
 
             if (string.IsNullOrWhiteSpace(ip))
             {
-                MessageBox.Show(
-                    "Vui lòng nhập địa chỉ IP của Server.",
-                    "Thông báo",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-
-                txtServerIp.Focus();
+                MessageBox.Show("Vui lòng nhập địa chỉ IP của Server.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
             if (!int.TryParse(portText, out int port) || port < 1 || port > 65535)
             {
-                MessageBox.Show(
-                    "Port không hợp lệ. Vui lòng nhập trong khoảng 1 - 65535.",
-                    "Lỗi",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-
-                txtPort.Focus();
+                MessageBox.Show("Port không hợp lệ. Vui lòng nhập trong khoảng 1 - 65535.", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
@@ -132,157 +441,356 @@ namespace ClientApp
                 btnConnect.Enabled = false;
 
                 _clientService = new TcpClientService(ip, port);
-
                 List<FileItem> files = await _clientService.GetFileListAsync();
-
                 _downloadService = new DownloadService(_clientService, 3);
 
-                lstServerFiles.Items.Clear();
+                SyncGridWithServerFiles(files);
 
-                foreach (FileItem file in files)
-                {
-                    lstServerFiles.Items.Add(file);
-                }
-
-                SetConnectionState(true);
+                _isConnected = true;
+                UpdateConnectionUi();
                 _connectionMonitorTimer.Start();
             }
             catch (Exception ex)
             {
                 DisconnectClient();
-
                 MessageBox.Show(
-                    "Không thể kết nối đến Server.\n\n" +
-                    $"Địa chỉ: {ip}:{port}\n" +
-                    $"Chi tiết: {ex.Message}",
-                    "Kết nối thất bại",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
+                    $"Không thể kết nối đến Server.\n\nĐịa chỉ: {ip}:{port}\nChi tiết: {ex.Message}",
+                    "Kết nối thất bại", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
                 btnConnect.Enabled = true;
-                UpdateButtonStates();
-                UpdateStatusBar();
             }
         }
 
-        // Hàm hỗ trợ dọn dẹp kết nối an toàn
         private void DisconnectClient()
         {
             _connectionMonitorTimer.Stop();
+            _progressRefreshTimer.Stop();
 
-            try
-            {
-                _clientService?.Disconnect();
-            }
-            catch { }
+            try { _clientService?.Disconnect(); } catch { }
 
             _clientService = null;
             _downloadService = null;
+            _isConnected = false;
 
-            SetConnectionState(false);
-            lstServerFiles.Items.Clear();
-
-            UpdateButtonStates();
-            UpdateStatusBar();
+            UpdateConnectionUi();
         }
 
-        private void SetConnectionState(bool connected)
+        private async System.Threading.Tasks.Task TestConnectionAsync()
         {
-            _isConnected = connected;
-
-            if (connected)
+            if (_clientService == null)
             {
-                lblStatusDot.ForeColor = Color.FromArgb(39, 174, 96);   // Green
-                lblStatusText.Text = $"Đã kết nối: {txtServerIp.Text}:{txtPort.Text}";
-                lblStatusText.ForeColor = Color.FromArgb(174, 214, 241);
-                lblStatusText.Font = new Font("Segoe UI", 9f);
-                btnConnect.Text = "⏏  Ngắt kết nối";
-                btnConnect.BackColor = Color.FromArgb(192, 57, 43);
-                btnConnect.FlatAppearance.BorderColor = Color.FromArgb(192, 57, 43);
-                tsslStatus.Text = "🟢  Đã kết nối";
-                tsslStatus.ForeColor = Color.FromArgb(88, 214, 141);
-                txtServerIp.Enabled = false;
-                txtPort.Enabled = false;
+                MessageBox.Show("Chưa kết nối tới Server.", "Test kết nối", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            btnTestConnection.Enabled = false;
+
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                await _clientService.GetFileListAsync();
+                sw.Stop();
+
+                MessageBox.Show(
+                    $"Server phản hồi bình thường ({sw.ElapsedMilliseconds} ms).",
+                    "Test kết nối", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "Server không phản hồi.\n\n" + ex.Message,
+                    "Test kết nối", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+                DisconnectClient();
+            }
+            finally
+            {
+                btnTestConnection.Enabled = true;
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  XEM TOÀN BỘ FILE TRÊN SERVER (CẢI TIẾN: DATAGRIDVIEW + CHỌN TẤT CẢ)
+        // ══════════════════════════════════════════════════════════════
+        private async System.Threading.Tasks.Task ShowServerFilesDialogAsync()
+        {
+            if (!IsClientConnected())
+            {
+                MessageBox.Show("Vui lòng kết nối tới Server.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            List<FileItem> allFiles;
+
+            btnViewServerFiles.Enabled = false;
+            try
+            {
+                allFiles = await _clientService!.GetFileListAsync();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Không thể lấy danh sách file từ Server.\n\n" + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                DisconnectClient();
+                return;
+            }
+            finally
+            {
+                btnViewServerFiles.Enabled = true;
+            }
+
+            var fileList = allFiles.OrderBy(f => f.FileName).ToList();
+
+            using var dialog = new Form
+            {
+                Text = "Toàn bộ file trên Server",
+                Size = new Size(650, 600),
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false,
+                MaximizeBox = false,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                Font = new Font("Segoe UI", 9f)
+            };
+
+            var lblHint = new Label
+            {
+                Text = "Tích chọn ô, click dòng hoặc quét khối các file muốn thêm (lại) vào hàng đợi tải:",
+                Dock = DockStyle.Top,
+                Height = 36,
+                Padding = new Padding(12, 10, 12, 0),
+                ForeColor = Color.FromArgb(60, 60, 60)
+            };
+
+            // Dùng DataGridView tạo các ô phân biệt & cho phép quét khối chọn nhiều dòng
+            var dgvDialog = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                AutoGenerateColumns = false,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                AllowUserToResizeRows = false,
+                RowHeadersVisible = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = true,
+                BackgroundColor = Color.White,
+                BorderStyle = BorderStyle.FixedSingle,
+                ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
+                ColumnHeadersHeight = 32,
+                RowTemplate = { Height = 30 },
+                GridColor = Color.FromArgb(225, 230, 235),
+                CellBorderStyle = DataGridViewCellBorderStyle.Single
+            };
+
+            dgvDialog.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(240, 243, 246);
+            dgvDialog.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            dgvDialog.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(240, 243, 246);
+            dgvDialog.ColumnHeadersDefaultCellStyle.SelectionForeColor = dgvDialog.ColumnHeadersDefaultCellStyle.ForeColor;
+            dgvDialog.EnableHeadersVisualStyles = false;
+            dgvDialog.RowsDefaultCellStyle.BackColor = Color.White;
+            dgvDialog.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(248, 250, 252);
+
+            var colChk = new DataGridViewCheckBoxColumn
+            {
+                Name = "colChk",
+                HeaderText = "",
+                Width = 36,
+                Resizable = DataGridViewTriState.False
+            };
+            var colName = new DataGridViewTextBoxColumn
+            {
+                Name = "colName",
+                HeaderText = "Tên file",
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                ReadOnly = true
+            };
+            var colSize = new DataGridViewTextBoxColumn
+            {
+                Name = "colSize",
+                HeaderText = "Kích thước",
+                Width = 100,
+                ReadOnly = true
+            };
+            var colStatus = new DataGridViewTextBoxColumn
+            {
+                Name = "colStatus",
+                HeaderText = "Trạng thái",
+                Width = 160,
+                ReadOnly = true
+            };
+
+            dgvDialog.Columns.AddRange(colChk, colName, colSize, colStatus);
+
+            foreach (FileItem file in fileList)
+            {
+                bool alreadyInQueue = _items.ContainsKey(file.FileName);
+                int idx = dgvDialog.Rows.Add(
+                    false,
+                    file.FileName,
+                    FormatBytes(file.FileSize),
+                    alreadyInQueue ? "Đã có trong hàng đợi" : "Chưa có"
+                );
+                dgvDialog.Rows[idx].Tag = file;
+                if (alreadyInQueue)
+                {
+                    dgvDialog.Rows[idx].Cells[colStatus.Index].Style.ForeColor = ClrGray;
+                }
+            }
+
+            // Click vào bất kỳ đâu trên dòng sẽ tự động đảo trạng thái ô checkbox
+            dgvDialog.CellClick += (s, e) =>
+            {
+                if (e.RowIndex >= 0 && e.ColumnIndex != colChk.Index)
+                {
+                    bool curVal = Convert.ToBoolean(dgvDialog.Rows[e.RowIndex].Cells[colChk.Index].Value);
+                    dgvDialog.Rows[e.RowIndex].Cells[colChk.Index].Value = !curVal;
+                }
+            };
+
+            var pnlDialogButtons = new Panel { Dock = DockStyle.Bottom, Height = 52, BackColor = Color.White };
+            var topBorderDialog = new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = Color.FromArgb(220, 220, 220) };
+
+            var btnSelectAllDialog = new Button
+            {
+                Text = "Chọn tất cả",
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Padding(10, 0, 10, 0),
+                Height = 32,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Cursor = Cursors.Hand,
+                Location = new Point(12, 10)
+            };
+
+            // Đảo trạng thái chọn tất cả / bỏ chọn tất cả
+            btnSelectAllDialog.Click += (s, e) =>
+            {
+                bool anyUnchecked = dgvDialog.Rows.Cast<DataGridViewRow>().Any(r => !Convert.ToBoolean(r.Cells[colChk.Index].Value));
+                foreach (DataGridViewRow row in dgvDialog.Rows)
+                {
+                    row.Cells[colChk.Index].Value = anyUnchecked;
+                    row.Selected = anyUnchecked;
+                }
+            };
+
+            var btnClose = new Button
+            {
+                Text = "Đóng",
+                DialogResult = DialogResult.Cancel,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Padding(12, 0, 12, 0),
+                Height = 32,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Cursor = Cursors.Hand
+            };
+
+            var btnAdd = new Button
+            {
+                Text = "Thêm vào hàng đợi",
+                DialogResult = DialogResult.OK,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = ClrGreen,
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                Padding = new Padding(12, 0, 12, 0),
+                Height = 32,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Cursor = Cursors.Hand
+            };
+            btnAdd.FlatAppearance.BorderColor = ClrGreen;
+
+            pnlDialogButtons.Controls.Add(btnSelectAllDialog);
+            pnlDialogButtons.Controls.Add(btnClose);
+            pnlDialogButtons.Controls.Add(btnAdd);
+
+            dialog.Controls.Add(dgvDialog);
+            dialog.Controls.Add(topBorderDialog);
+            dialog.Controls.Add(pnlDialogButtons);
+            dialog.Controls.Add(lblHint);
+
+            dialog.AcceptButton = btnAdd;
+            dialog.CancelButton = btnClose;
+
+            dialog.Shown += (s, e) =>
+            {
+                btnAdd.Location = new Point(pnlDialogButtons.ClientSize.Width - btnAdd.Width - 12, 10);
+                btnClose.Location = new Point(btnAdd.Left - btnClose.Width - 8, 10);
+            };
+
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+            {
+                int addedCount = 0;
+
+                foreach (DataGridViewRow row in dgvDialog.Rows)
+                {
+                    bool isChecked = Convert.ToBoolean(row.Cells[colChk.Index].Value);
+                    bool isSelected = row.Selected;
+
+                    // Nhận diện file nếu ô được tick HOẶC dòng đang được quét khối chọn
+                    if ((isChecked || isSelected) && row.Tag is FileItem file)
+                    {
+                        _hiddenFiles.Remove(file.FileName);
+
+                        if (!_items.ContainsKey(file.FileName))
+                        {
+                            AddFileRow(file);
+                            addedCount++;
+                        }
+                    }
+                }
+
+                UpdateSummary();
+
+                if (addedCount > 0)
+                {
+                    MessageBox.Show($"Đã thêm {addedCount} file vào hàng đợi.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+        }
+
+        private void UpdateConnectionUi()
+        {
+            btnConnect.Enabled = !_isConnected;
+            btnDisconnect.Enabled = _isConnected;
+            txtServerIp.Enabled = !_isConnected;
+            txtPort.Enabled = !_isConnected;
+
+            if (_isConnected)
+            {
+                lblStatusDot.ForeColor = ClrGreen;
+                lblStatusText.Text = $"Đã kết nối {txtServerIp.Text}:{txtPort.Text}";
+                lblStatusText.ForeColor = ClrGreen;
             }
             else
             {
-                lblStatusDot.ForeColor = Color.FromArgb(100, 100, 100); // Gray
+                lblStatusDot.ForeColor = ClrGray;
                 lblStatusText.Text = "Chưa kết nối";
-                lblStatusText.ForeColor = Color.FromArgb(127, 140, 141);
-                lblStatusText.Font = new Font("Segoe UI", 9f, FontStyle.Italic);
-                btnConnect.Text = "🔌  Kết nối";
-                btnConnect.BackColor = Color.FromArgb(52, 152, 219);
-                btnConnect.FlatAppearance.BorderColor = Color.FromArgb(52, 152, 219);
-                tsslStatus.Text = "⚫  Chưa kết nối";
-                tsslStatus.ForeColor = Color.FromArgb(127, 140, 141);
-                txtServerIp.Enabled = true;
-                txtPort.Enabled = true;
+                lblStatusText.ForeColor = ClrGray;
             }
         }
 
-        // ── Connection monitor (phát hiện chủ động mất kết nối) ──────────
-        private static bool FileListsEqual(IEnumerable<FileItem> a, IEnumerable<FileItem> b)
-        {
-            var listA = a.Select(f => (f.FileName, f.FileSize)).OrderBy(x => x.FileName).ToList();
-            var listB = b.Select(f => (f.FileName, f.FileSize)).OrderBy(x => x.FileName).ToList();
-            return listA.SequenceEqual(listB);
-        }
-
+        // ══════════════════════════════════════════════════════════════
+        //  CONNECTION MONITOR
+        // ══════════════════════════════════════════════════════════════
         private async void ConnectionMonitorTimer_Tick(object? sender, EventArgs e)
         {
-            // Bỏ qua nếu: đang không kết nối, đang tải file, hoặc lần kiểm tra
-            // trước vẫn chưa xong (tránh chồng chéo nhiều request cùng lúc).
-            if (!_isConnected || _isDownloadInProgress || _isMonitorTicking || _clientService == null)
-            {
-                return;
-            }
+            if (!_isConnected || _isDownloadInProgress || _isMonitorTicking || _clientService == null) return;
 
             _isMonitorTicking = true;
 
             try
             {
                 List<FileItem> files = await _clientService.GetFileListAsync();
-
-                // Chỉ cập nhật UI khi danh sách file THỰC SỰ thay đổi — tránh
-                // Clear() + add lại liên tục mỗi 5 giây gây nhấp nháy dù
-                // không có gì thay đổi trên Server.
-                if (!FileListsEqual(lstServerFiles.Items.Cast<FileItem>(), files))
-                {
-                    // Ghi nhớ các file đang được chọn để chọn lại sau khi refresh
-                    var selectedNames = lstServerFiles.SelectedItems
-                        .Cast<FileItem>()
-                        .Select(f => f.FileName)
-                        .ToHashSet();
-
-                    lstServerFiles.BeginUpdate();
-                    lstServerFiles.Items.Clear();
-
-                    foreach (FileItem file in files)
-                    {
-                        int index = lstServerFiles.Items.Add(file);
-
-                        if (selectedNames.Contains(file.FileName))
-                        {
-                            lstServerFiles.SetSelected(index, true);
-                        }
-                    }
-
-                    lstServerFiles.EndUpdate();
-                }
+                SyncGridWithServerFiles(files);
             }
             catch
             {
-                // Server không còn phản hồi -> chủ động ngắt kết nối phía UI
-                // để không hiển thị danh sách file "ảo" của một kết nối đã chết.
                 DisconnectClient();
-
-                MessageBox.Show(
-                    "Mất kết nối tới Server (Server có thể đã dừng).",
-                    "Mất kết nối",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
+                MessageBox.Show("Mất kết nối tới Server (Server có thể đã dừng).", "Mất kết nối", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             finally
             {
@@ -290,387 +798,414 @@ namespace ClientApp
             }
         }
 
-        // ── Refresh server file list ───────────────────────────────────
-        private async void btnRefresh_Click(object sender, EventArgs e)
+        // ══════════════════════════════════════════════════════════════
+        //  GRID DATA SYNC
+        // ══════════════════════════════════════════════════════════════
+        private void SyncGridWithServerFiles(List<FileItem> serverFiles)
         {
-            if (!IsClientConnected())
+            var serverNames = serverFiles.Select(f => f.FileName).ToHashSet();
+
+            foreach (string staleName in _items.Keys.Except(serverNames).ToList())
             {
-                DisconnectClient();
-                MessageBox.Show(
-                    "Chưa kết nối hoặc kết nối đến Server đã bị ngắt.",
-                    "Thông báo",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
+                _items.Remove(staleName);
+
+                var row = dgv.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => (r.Tag as DownloadItem)?.FileName == staleName);
+                if (row != null) dgv.Rows.Remove(row);
             }
 
-            try
+            foreach (FileItem file in serverFiles)
             {
-                btnRefresh.Enabled = false;
+                if (_items.ContainsKey(file.FileName)) continue;
+                if (_hiddenFiles.Contains(file.FileName)) continue;
 
-                List<FileItem> files = await _clientService!.GetFileListAsync();
+                AddFileRow(file);
+            }
 
-                lstServerFiles.Items.Clear();
+            UpdateSummary();
+        }
 
-                foreach (FileItem file in files)
+        private void AddFileRow(FileItem file)
+        {
+            if (_items.ContainsKey(file.FileName)) return;
+
+            var item = new DownloadItem(file.FileName, file.FileSize);
+            _items[file.FileName] = item;
+
+            int rowIndex = dgv.Rows.Add();
+            var row = dgv.Rows[rowIndex];
+            row.Tag = item;
+            row.Cells[colType.Index].Value = GetFileTypeLabel(file.FileName);
+            row.Cells[colName.Index].Value = file.FileName;
+            row.Cells[colSize.Index].Value = FormatBytes(file.FileSize);
+
+            RefreshRowVisual(row, item);
+        }
+
+        private static string GetFileTypeLabel(string fileName)
+        {
+            string ext = System.IO.Path.GetExtension(fileName).TrimStart('.').ToUpperInvariant();
+            return string.IsNullOrEmpty(ext) ? "FILE" : ext;
+        }
+
+        private static string FormatBytes(long bytes)
+        {
+            double mb = bytes / 1024.0 / 1024.0;
+            return mb >= 1 ? $"{mb:F1} MB" : $"{bytes / 1024.0:F1} KB";
+        }
+
+        private void RefreshAllRowVisuals()
+        {
+            foreach (DataGridViewRow row in dgv.Rows)
+            {
+                if (row.Tag is DownloadItem item)
                 {
-                    lstServerFiles.Items.Add(file);
+                    RefreshRowVisual(row, item);
                 }
             }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    "Không thể cập nhật danh sách file.\n\n" + ex.Message,
-                    "Lỗi",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
 
-                DisconnectClient();
-            }
-            finally
+            UpdateSummary();
+        }
+
+        private void RefreshRowVisual(DataGridViewRow row, DownloadItem item)
+        {
+            row.Cells[colStatus.Index].Value = StatusLabel(item.Status);
+            row.Cells[colStatus.Index].Style.ForeColor = StatusColor(item.Status);
+            row.Cells[colProgress.Index].Value = $"{item.Progress:F0}%";
+
+            long displayedDownloaded = item.Status == DownloadStatus.Completed
+                ? item.FileSize
+                : (long)(item.FileSize * Math.Max(0, Math.Min(100, item.Progress)) / 100.0);
+
+            row.Cells[colTransferred.Index].Value = $"{FormatBytes(displayedDownloaded)} / {FormatBytes(item.FileSize)}";
+            row.Cells[colSpeed.Index].Value = item.Status == DownloadStatus.Downloading ? $"{item.SpeedMbps:F2} MB/s" : "";
+            row.DefaultCellStyle.BackColor = item.Status == DownloadStatus.Failed ? ClrRowError : Color.White;
+        }
+
+        private static string StatusLabel(string status) => status switch
+        {
+            DownloadStatus.Waiting => "• Chờ",
+            DownloadStatus.Downloading => "• Đang tải",
+            DownloadStatus.Completed => "• Hoàn thành",
+            DownloadStatus.Failed => "• Lỗi",
+            _ => status
+        };
+
+        private static Color StatusColor(string status) => status switch
+        {
+            DownloadStatus.Completed => Color.FromArgb(39, 174, 96),
+            DownloadStatus.Downloading => Color.FromArgb(52, 152, 219),
+            DownloadStatus.Failed => Color.FromArgb(192, 57, 43),
+            _ => Color.FromArgb(127, 140, 141)
+        };
+
+        private void UpdateSummary()
+        {
+            int total = _items.Count;
+            int downloading = _items.Values.Count(i => i.Status == DownloadStatus.Downloading);
+            int completed = _items.Values.Count(i => i.Status == DownloadStatus.Completed);
+            int failed = _items.Values.Count(i => i.Status == DownloadStatus.Failed);
+            long totalSize = _items.Values.Sum(i => i.FileSize);
+
+            lblSummary.Text = $"{total} file ({FormatBytes(totalSize)})   |   ⬇ Đang tải: {downloading}   |   ✔ Xong: {completed}   |   ⚠ Lỗi: {failed}";
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  GRID INTERACTIONS
+        // ══════════════════════════════════════════════════════════════
+        private void Dgv_CellClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0) return;
+
+            var row = dgv.Rows[e.RowIndex];
+            if (row.Tag is not DownloadItem item) return;
+
+            if (e.ColumnIndex == colRetry.Index)
             {
-                UpdateButtonStates();
+                _ = DownloadItemsAsync(new List<DownloadItem> { item });
+            }
+            else if (e.ColumnIndex == colDelete.Index)
+            {
+                if (item.Status == DownloadStatus.Downloading)
+                {
+                    MessageBox.Show($"Không thể xoá '{item.FileName}' khi đang tải.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                var confirm = MessageBox.Show(
+                    $"Xoá '{item.FileName}' khỏi danh sách?",
+                    "Xác nhận xoá", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+                if (confirm == DialogResult.Yes)
+                {
+                    DeleteRow(item);
+                    UpdateSummary();
+                }
             }
         }
 
-        // ── Add to queue ───────────────────────────────────────────────
-        private void btnAdd_Click(object sender, EventArgs e)
+        private void Dgv_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
         {
-            if (lstServerFiles.SelectedItems.Count == 0)
+            if (e.RowIndex < 0 || e.ColumnIndex != colProgress.Index) return;
+            if (dgv.Rows[e.RowIndex].Tag is not DownloadItem item) return;
+
+            e.PaintBackground(e.CellBounds, true);
+
+            double pct = Math.Max(0, Math.Min(100, item.Progress));
+            int barWidth = (int)((e.CellBounds.Width - 8) * pct / 100.0);
+
+            Color barColor = item.Status switch
             {
-                MessageBox.Show(
-                    "Vui lòng chọn ít nhất một file để thêm vào hàng đợi.",
-                    "Thông báo",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-                return;
+                DownloadStatus.Completed => Color.FromArgb(46, 204, 113),
+                DownloadStatus.Downloading => Color.FromArgb(93, 173, 226),
+                DownloadStatus.Failed => Color.FromArgb(231, 76, 60),
+                _ => Color.FromArgb(225, 225, 225)
+            };
+
+            using (var brush = new SolidBrush(barColor))
+            {
+                e.Graphics.FillRectangle(brush, e.CellBounds.X + 4, e.CellBounds.Y + 6, Math.Max(0, barWidth), e.CellBounds.Height - 12);
             }
 
-            int addedCount = 0;
-            int duplicateCount = 0;
+            TextRenderer.DrawText(
+                e.Graphics, $"{pct:F0}%", e.CellStyle.Font, e.CellBounds,
+                pct > 50 ? Color.White : Color.Black,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 
-            foreach (var selectedItem in lstServerFiles.SelectedItems)
-            {
-                if (selectedItem is not FileItem file) continue;
-
-                var item = new DownloadItem(file.FileName, file.FileSize);
-
-                if (_queueService.AddToQueue(item))
-                    addedCount++;
-                else
-                    duplicateCount++;
-            }
-
-            RefreshDownloadView();
-
-            string msg = $"✅ Đã thêm {addedCount} file vào hàng đợi.";
-            if (duplicateCount > 0)
-                msg += $"\n⚠️ {duplicateCount} file đã có trong hàng đợi.";
-
-            MessageBox.Show(msg, "Hàng đợi", MessageBoxButtons.OK, MessageBoxIcon.Information);
-
-            UpdateButtonStates();
-            UpdateStatusBar();
+            e.Handled = true;
         }
 
-        // ── Remove from queue ──────────────────────────────────────────
-        private void btnRemove_Click(object sender, EventArgs e)
+        private void ToggleSelectAll()
         {
-            if (lvDownloads.SelectedItems.Count == 0)
-            {
-                MessageBox.Show("Vui lòng chọn file cần xóa.", "Thông báo",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
+            bool anyUnselected = dgv.Rows.Cast<DataGridViewRow>().Any(r => !r.Selected);
 
-            var toRemove = lvDownloads.SelectedItems
-                .Cast<ListViewItem>()
-                .Select(lvi => lvi.Tag as DownloadItem)
-                .Where(d => d != null)
+            foreach (DataGridViewRow row in dgv.Rows)
+            {
+                row.Selected = anyUnselected;
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  DOWNLOAD
+        // ══════════════════════════════════════════════════════════════
+        private async System.Threading.Tasks.Task btnDownloadSelected_Click()
+        {
+            var selected = _items.Values
+                .Where(IsRowSelected)
                 .ToList();
 
-            foreach (var item in toRemove)
-                _queueService.RemoveFromQueue(item!.FileName);
+            if (selected.Count == 0)
+            {
+                MessageBox.Show("Chưa chọn file nào để tải. Vui lòng chọn (click hoặc quét khối) ít nhất 1 file.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
-            RefreshDownloadView();
-            UpdateButtonStates();
-            UpdateStatusBar();
+            await DownloadItemsAsync(selected);
         }
 
-        // ── Start download ─────────────────────────────────────────────
-        private async void btnDownload_Click(object sender, EventArgs e)
+        private bool IsRowSelected(DownloadItem item)
         {
-            // 1. Kiểm tra kết nối trước khi tải
+            var row = dgv.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag == item);
+            return row != null && row.Selected;
+        }
+
+        private async System.Threading.Tasks.Task DownloadItemsAsync(List<DownloadItem> toDownload)
+        {
             if (!IsClientConnected())
             {
                 DisconnectClient();
-                MessageBox.Show(
-                    "Vui lòng kết nối tới Server.",
-                    "Lỗi kết nối",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
+                MessageBox.Show("Vui lòng kết nối tới Server.", "Lỗi kết nối", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            // Yêu cầu phải chọn ít nhất 1 file trong hàng đợi trước khi tải.
-            if (lvDownloads.SelectedItems.Count == 0)
-            {
-                MessageBox.Show(
-                    "Chưa chọn file nào để tải. Vui lòng chọn ít nhất 1 file trong hàng đợi.",
-                    "Thông báo",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-                return;
-            }
+            if (toDownload.Count == 0) return;
 
-            List<DownloadItem> queue = lvDownloads.SelectedItems
-                .Cast<ListViewItem>()
-                .Select(lvi => lvi.Tag as DownloadItem)
-                .Where(d => d != null)
-                .Cast<DownloadItem>()
-                .ToList();
+            btnRetryFailed.Enabled = false;
+            btnDeleteSelected.Enabled = false;
+            btnDeleteAll.Enabled = false;
+            _isDownloadInProgress = true;
+            _progressRefreshTimer.Start();
 
-            if (queue.Count == 0)
-            {
-                MessageBox.Show(
-                    "Hàng đợi đang trống. Vui lòng chọn file để thêm vào hàng đợi trước.",
-                    "Thông báo",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-                return;
-            }
+            _downloadCts = new System.Threading.CancellationTokenSource();
+            SetDownloadButtonToStopMode(true);
+
+            int successCount = 0;
+            int failCount = 0;
+            bool stoppedEarly = false;
+            bool connectionLost = false;
 
             try
             {
-                // Khóa các nút trong lúc download
-                btnDownload.Enabled = false;
-                btnAdd.Enabled = false;
-                btnRemove.Enabled = false;
-                btnRefresh.Enabled = false;
-                _isDownloadInProgress = true;
-
-                RefreshDownloadView();
-
-                // TẢI TUẦN TỰ TỪNG FILE (đã chọn, hoặc toàn bộ nếu không chọn)
-                foreach (DownloadItem item in queue)
+                foreach (DownloadItem item in toDownload)
                 {
-                    // Kiểm tra kết nối lại trước mỗi file
+                    if (_downloadCts.IsCancellationRequested)
+                    {
+                        stoppedEarly = true;
+                        break;
+                    }
+
                     if (!IsClientConnected())
                     {
-                        MessageBox.Show(
-                            "Kết nối tới Server đã bị ngắt! Quá trình tải xuống tạm dừng.",
-                            "Mất kết nối",
-                            MessageBoxButtons.OK,
-                            MessageBoxIcon.Error);
-
-                        DisconnectClient();
+                        connectionLost = true;
                         break;
                     }
 
                     try
                     {
                         await _downloadService!.ExecuteDownloadAsync(item);
+                        successCount++;
                     }
-                    catch (Exception ex)
+                    catch
                     {
-                        item.Status = "Lỗi";
-                        MessageBox.Show(
-                            $"Lỗi khi tải file '{item.FileName}':\n{ex.Message}",
-                            "Lỗi tải file",
-                            MessageBoxButtons.OK,
-                            MessageBoxIcon.Error);
+                        item.Status = DownloadStatus.Failed;
+                        failCount++;
 
                         if (!IsClientConnected())
                         {
-                            DisconnectClient();
+                            connectionLost = true;
+                            RefreshAllRowVisuals();
                             break;
                         }
                     }
 
-                    // Cập nhật UI sau mỗi file
-                    RefreshDownloadView();
-                    UpdateStatusBar();
-                }
+                    DeselectRow(item);
+                    MoveRowToTop(item);
 
-                if (_isConnected)
-                {
-                    MessageBox.Show(
-                        "Đã tải xong tất cả các file.",
-                        "Download",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Information);
+                    RefreshAllRowVisuals();
                 }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    "Có lỗi xảy ra trong quá trình tải xuống.\n\n" + ex.Message,
-                    "Lỗi",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
             }
             finally
             {
                 _isDownloadInProgress = false;
-                UpdateButtonStates();
-                UpdateStatusBar();
+                _progressRefreshTimer.Stop();
+                RefreshAllRowVisuals();
+
+                _downloadCts?.Dispose();
+                _downloadCts = null;
+                SetDownloadButtonToStopMode(false);
+
+                btnRetryFailed.Enabled = true;
+                btnDeleteSelected.Enabled = true;
+                btnDeleteAll.Enabled = true;
+            }
+
+            if (connectionLost)
+            {
+                DisconnectClient();
+                MessageBox.Show(
+                    $"Mất kết nối tới Server giữa chừng.\nĐã tải xong: {successCount}   |   Lỗi: {failCount}",
+                    "Mất kết nối", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            else if (stoppedEarly)
+            {
+                MessageBox.Show(
+                    $"Đã dừng tải theo yêu cầu.\nĐã tải xong: {successCount}   |   Lỗi: {failCount}   |   Chưa tải: {toDownload.Count - successCount - failCount}",
+                    "Đã dừng", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else
+            {
+                MessageBox.Show(
+                    $"Hoàn tất.\nThành công: {successCount}   |   Lỗi: {failCount}",
+                    "Tải xuống", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
 
-        // Helper kiểm tra trạng thái kết nối thực tế (đã sửa lỗi cú pháp 2 dấu ';')
+        private void SetDownloadButtonToStopMode(bool isDownloading)
+        {
+            if (isDownloading)
+            {
+                btnDownloadSelected.Text = "Dừng tải";
+                btnDownloadSelected.BackColor = ClrRed;
+                btnDownloadSelected.FlatAppearance.BorderColor = ClrRed;
+            }
+            else
+            {
+                btnDownloadSelected.Text = "Tải các file đã chọn";
+                btnDownloadSelected.BackColor = ClrGreen;
+                btnDownloadSelected.FlatAppearance.BorderColor = ClrGreen;
+            }
+        }
+
+        private void DeselectRow(DownloadItem item)
+        {
+            var row = dgv.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag == item);
+            if (row != null) row.Selected = false;
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  XÓA FILE KHỎI DANH SÁCH
+        // ══════════════════════════════════════════════════════════════
+        private void DeleteRow(DownloadItem item, bool warnIfDownloading = true)
+        {
+            if (item.Status == DownloadStatus.Downloading)
+            {
+                if (warnIfDownloading)
+                {
+                    MessageBox.Show($"Không thể xoá '{item.FileName}' khi đang tải.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                return;
+            }
+
+            _hiddenFiles.Add(item.FileName);
+            _items.Remove(item.FileName);
+
+            var row = dgv.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag == item);
+            if (row != null) dgv.Rows.Remove(row);
+        }
+
+        private void DeleteSelectedRows()
+        {
+            var selectedItems = _items.Values.Where(IsRowSelected).ToList();
+
+            if (selectedItems.Count == 0)
+            {
+                MessageBox.Show("Chưa chọn file nào để xoá. Vui lòng click hoặc quét khối chọn ít nhất 1 file.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var confirm = MessageBox.Show(
+                $"Xoá {selectedItems.Count} file đã chọn khỏi danh sách?",
+                "Xác nhận xoá", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+            if (confirm != DialogResult.Yes) return;
+
+            foreach (var item in selectedItems)
+            {
+                DeleteRow(item, warnIfDownloading: false);
+            }
+
+            UpdateSummary();
+        }
+
+        private void DeleteAllRows()
+        {
+            if (_items.Count == 0) return;
+
+            var confirm = MessageBox.Show(
+                $"Xoá toàn bộ {_items.Count} file khỏi danh sách?",
+                "Xác nhận xoá", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+            if (confirm != DialogResult.Yes) return;
+
+            foreach (var item in _items.Values.ToList())
+            {
+                DeleteRow(item, warnIfDownloading: false);
+            }
+
+            UpdateSummary();
+        }
+
+        private void MoveRowToTop(DownloadItem item)
+        {
+            var row = dgv.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag == item);
+            if (row == null || row.Index == 0) return;
+
+            dgv.Rows.Remove(row);
+            dgv.Rows.Insert(0, row);
+        }
+
         private bool IsClientConnected()
         {
-            return _isConnected
-                && _clientService != null
-                && _downloadService != null
-                && _clientService.IsConnected;
+            return _isConnected && _clientService != null && _downloadService != null && _clientService.IsConnected;
         }
-
-        // ── Refresh ListView ───────────────────────────────────────────
-        private void RefreshDownloadView()
-        {
-            lstDownloadQueue.Items.Clear();
-
-            lvDownloads.BeginUpdate();
-            lvDownloads.Items.Clear();
-
-            foreach (var item in _queueService.GetQueue())
-            {
-                lstDownloadQueue.Items.Add(item);
-
-                var row = new ListViewItem(item.FileName);
-                row.SubItems.Add(item.Status);
-                row.SubItems.Add($"{item.Progress:F1}%");
-                row.SubItems.Add($"{item.SpeedMbps:F2} MB/s");
-                row.BackColor = StatusColor(item.Status);
-                row.Tag = item;
-
-                lvDownloads.Items.Add(row);
-            }
-
-            lvDownloads.EndUpdate();
-        }
-
-        private static Color StatusColor(string status) => status switch
-        {
-            "Downloading" => ClrDownloading,
-            "Completed" => ClrCompleted,
-            "Failed" => ClrError,
-            "Waiting" => ClrPending,
-            "Đang tải" => ClrDownloading,
-            "Hoàn thành" => ClrCompleted,
-            "Lỗi" => ClrError,
-            _ => ClrPending
-        };
-
-        // ── UI state helpers ───────────────────────────────────────────
-        private void UpdateButtonStates()
-        {
-            int queueCount = _queueService.GetQueue().Count;
-
-            btnAdd.Enabled = _isConnected && lstServerFiles.SelectedItems.Count > 0;
-            btnRefresh.Enabled = _isConnected;
-            btnRemove.Enabled = lvDownloads.SelectedItems.Count > 0;
-            btnDownload.Enabled = queueCount > 0;
-        }
-
-        private void UpdateStatusBar()
-        {
-            int count = _queueService.GetQueue().Count;
-            tsslQueue.Text = $"  |  Hàng đợi: {count} file";
-        }
-
-        // ── Event handlers ─────────────────────────────────────────────
-        private void lstServerFiles_SelectedIndexChanged(object sender, EventArgs e)
-            => UpdateButtonStates();
-
-        private void lvDownloads_SelectedIndexChanged(object sender, EventArgs e)
-            => UpdateButtonStates();
-
-        private void lstServerFiles_DoubleClick(object sender, EventArgs e)
-        {
-            if (lstServerFiles.SelectedItems.Count > 0)
-                btnAdd_Click(sender, e);
-        }
-
-        private void MainForm_KeyDown(object sender, KeyEventArgs e)
-        {
-            switch (e.KeyCode)
-            {
-                case Keys.F5:
-                    btnRefresh_Click(sender, e);
-                    e.Handled = true;
-                    break;
-                case Keys.Delete when lvDownloads.Focused:
-                    btnRemove_Click(sender, e);
-                    e.Handled = true;
-                    break;
-                case Keys.Enter when lstServerFiles.Focused:
-                    btnAdd_Click(sender, e);
-                    e.Handled = true;
-                    break;
-            }
-        }
-
-        private void pnlServerBtns_Resize(object sender, EventArgs e)
-            => btnAdd.Location = new Point(pnlServerBtns.Width - btnAdd.Width, 8);
-
-        private void pnlQueueBtns_Resize(object sender, EventArgs e)
-            => btnDownload.Location = new Point(pnlQueueBtns.Width - btnDownload.Width, 8);
-
-        // ── Quét khối (rubber-band select) cho lvDownloads ────────────
-        // ListView mặc định chỉ quét khối được khi bắt đầu kéo từ vùng trống.
-        // 3 handler dưới đây cho phép bắt đầu kéo ngay trên 1 dòng và tự
-        // chọn/bỏ chọn các dòng giao với vùng đang kéo qua — không cần giữ Ctrl.
-        private void lvDownloads_MouseDown(object sender, MouseEventArgs e)
-        {
-            if (e.Button != MouseButtons.Left) return;
-
-            _dragStartPoint = e.Location;
-            _isDragSelecting = true;
-        }
-
-        private void lvDownloads_MouseMove(object sender, MouseEventArgs e)
-        {
-            if (!_isDragSelecting || e.Button != MouseButtons.Left) return;
-
-            Rectangle selectionRect = NormalizeRectangle(_dragStartPoint, e.Location);
-
-            // Bỏ qua những cú click đơn thuần (chưa thực sự kéo)
-            if (selectionRect.Width < 4 && selectionRect.Height < 4) return;
-
-            bool additive = ModifierKeys.HasFlag(Keys.Control) || ModifierKeys.HasFlag(Keys.Shift);
-
-            foreach (ListViewItem item in lvDownloads.Items)
-            {
-                bool intersects = selectionRect.IntersectsWith(item.Bounds);
-
-                if (intersects)
-                {
-                    item.Selected = true;
-                }
-                else if (!additive)
-                {
-                    item.Selected = false;
-                }
-            }
-        }
-
-        private void lvDownloads_MouseUp(object sender, MouseEventArgs e)
-        {
-            _isDragSelecting = false;
-        }
-
-        private static Rectangle NormalizeRectangle(Point p1, Point p2)
-        {
-            int x = Math.Min(p1.X, p2.X);
-            int y = Math.Min(p1.Y, p2.Y);
-            int width = Math.Abs(p1.X - p2.X);
-            int height = Math.Abs(p1.Y - p2.Y);
-            return new Rectangle(x, y, width, height);
-        }
-
-        private void label1_Click(object sender, EventArgs e) { }
-        private void button2_Click(object sender, EventArgs e) => btnAdd_Click(sender, e);
     }
 }
