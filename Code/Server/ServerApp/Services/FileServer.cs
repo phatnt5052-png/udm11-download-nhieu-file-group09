@@ -17,6 +17,9 @@ namespace ServerApp.Services
         private CancellationTokenSource _cts;
         private bool _isRunning;
 
+        private readonly HashSet<TcpClient> _connectedClients = new();
+        private readonly object _clientsLock = new();
+
         public event Action<string> OnLog;
 
         public bool IsRunning => _isRunning;
@@ -44,6 +47,12 @@ namespace ServerApp.Services
                 while (!_cts.Token.IsCancellationRequested)
                 {
                     TcpClient client = await _listener.AcceptTcpClientAsync();
+
+                    lock (_clientsLock)
+                    {
+                        _connectedClients.Add(client);
+                    }
+
                     Log($"Client kết nối từ: {client.Client.RemoteEndPoint}");
 
                     _ = Task.Run(() => HandleClientAsync(client, _cts.Token));
@@ -133,6 +142,13 @@ namespace ServerApp.Services
                 {
                     Log($"Lỗi xử lý Client: {ex.Message}");
                 }
+                finally
+                {
+                    lock (_clientsLock)
+                    {
+                        _connectedClients.Remove(client);
+                    }
+                }
             }
         }
 
@@ -142,8 +158,32 @@ namespace ServerApp.Services
             if (!_isRunning) return;
 
             _isRunning = false;
+
+            // Dừng nhận Client mới
             _cts?.Cancel();
             _listener?.Stop();
+
+            // Lấy danh sách các Client đang kết nối
+            TcpClient[] clients;
+
+            lock (_clientsLock)
+            {
+                clients = _connectedClients.ToArray();
+                _connectedClients.Clear();
+            }
+
+            // Đóng toàn bộ connection đang hoạt động
+            foreach (TcpClient client in clients)
+            {
+                try
+                {
+                    client.Close();
+                }
+                catch
+                {
+                    // Bỏ qua lỗi khi đóng connection
+                }
+            }
 
             Log("Server đã dừng.");
         }
