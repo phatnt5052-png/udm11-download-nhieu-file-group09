@@ -411,26 +411,6 @@ namespace ClientApp
                 SortMode = DataGridViewColumnSortMode.NotSortable
             };
 
-            colType = new DataGridViewTextBoxColumn
-            {
-                HeaderText = "Loại",
-                Width = 55,
-                ReadOnly = true
-            };
-
-            colName = new DataGridViewTextBoxColumn
-            {
-                HeaderText = "Tên file",
-                ReadOnly = true,
-                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill
-            };
-
-            colSize = new DataGridViewTextBoxColumn
-            {
-                HeaderText = "Kích thước",
-                Width = 90,
-                ReadOnly = true
-            };
             colType = new DataGridViewTextBoxColumn { HeaderText = "Loại", Width = 55, ReadOnly = true };
             colName = new DataGridViewTextBoxColumn { HeaderText = "Tên file", ReadOnly = true, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill };
             colSize = new DataGridViewTextBoxColumn { HeaderText = "Kích thước", Width = 90, ReadOnly = true };
@@ -1074,11 +1054,17 @@ namespace ClientApp
         private void ToggleSelectAll()
         {
             bool anyUnchecked = dgv.Rows.Cast<DataGridViewRow>()
+                .Where(row => row.Tag is DownloadItem item &&
+                              item.Status != DownloadStatus.Completed)
                 .Any(row => !Convert.ToBoolean(row.Cells[colSelect.Index].Value));
 
             foreach (DataGridViewRow row in dgv.Rows)
             {
-                row.Cells[colSelect.Index].Value = anyUnchecked;
+                if (row.Tag is DownloadItem item &&
+                    item.Status != DownloadStatus.Completed)
+                {
+                    row.Cells[colSelect.Index].Value = anyUnchecked;
+                }
             }
         }
 
@@ -1090,12 +1076,12 @@ namespace ClientApp
             var selected = _items.Values
               .Where(item =>
               {
-                 var row = dgv.Rows
-                   .Cast<DataGridViewRow>()
-                   .FirstOrDefault(r => r.Tag == item);
+                  var row = dgv.Rows
+                    .Cast<DataGridViewRow>()
+                    .FirstOrDefault(r => r.Tag == item);
 
-                 return row != null &&
-                        Convert.ToBoolean(row.Cells[colSelect.Index].Value);
+                  return row != null &&
+                         Convert.ToBoolean(row.Cells[colSelect.Index].Value);
               })
               .ToList();
 
@@ -1233,8 +1219,23 @@ namespace ClientApp
 
         private void DeselectRow(DownloadItem item)
         {
-            var row = dgv.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag == item);
-            if (row != null) row.Selected = false;
+            var row = dgv.Rows.Cast<DataGridViewRow>()
+                .FirstOrDefault(r => r.Tag == item);
+
+            if (row != null)
+            {
+                // Bỏ tick checkbox
+                row.Cells[colSelect.Index].Value = false;
+
+                // Bỏ chọn dòng
+                row.Selected = false;
+
+                // Nếu file đã hoàn thành thì không cho tick lại
+                if (item.Status == DownloadStatus.Completed)
+                {
+                    row.Cells[colSelect.Index].ReadOnly = true;
+                }
+            }
         }
 
         // ══════════════════════════════════════════════════════════════
