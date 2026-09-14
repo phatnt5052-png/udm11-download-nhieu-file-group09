@@ -382,7 +382,7 @@ namespace ClientApp
                 ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
                 ColumnHeadersHeight = 34,
                 RowTemplate = { Height = 30 },
-                EditMode = DataGridViewEditMode.EditProgrammatically
+                EditMode = DataGridViewEditMode.EditOnEnter
             };
 
             dgv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(245, 246, 248);
@@ -451,6 +451,14 @@ namespace ClientApp
                     dgv.CurrentCell is DataGridViewCheckBoxCell)
                 {
                     dgv.CommitEdit(DataGridViewDataErrorContexts.Commit);
+                }
+            };
+
+            dgv.CellContentClick += (s, e) =>
+            {
+                if (e.RowIndex >= 0 && e.ColumnIndex == colSelect.Index)
+                {
+                    dgv.EndEdit();
                 }
             };
         }
