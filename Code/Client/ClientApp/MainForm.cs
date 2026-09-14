@@ -46,6 +46,7 @@ namespace ClientApp
 
         // ── Controls Grid & Bottom ─────────────────────────────────────
         private DataGridView dgv = null!;
+        private DataGridViewCheckBoxColumn colSelect = null!;
         private DataGridViewTextBoxColumn colType = null!;
         private DataGridViewTextBoxColumn colName = null!;
         private DataGridViewTextBoxColumn colSize = null!;
@@ -401,6 +402,35 @@ namespace ClientApp
             dgv.RowsDefaultCellStyle.BackColor = Color.White;
             dgv.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(250, 251, 252);
 
+            colSelect = new DataGridViewCheckBoxColumn
+            {
+                HeaderText = "",
+                Width = 40,
+                ReadOnly = false,
+                Name = "colSelect",
+                SortMode = DataGridViewColumnSortMode.NotSortable
+            };
+
+            colType = new DataGridViewTextBoxColumn
+            {
+                HeaderText = "Loại",
+                Width = 55,
+                ReadOnly = true
+            };
+
+            colName = new DataGridViewTextBoxColumn
+            {
+                HeaderText = "Tên file",
+                ReadOnly = true,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill
+            };
+
+            colSize = new DataGridViewTextBoxColumn
+            {
+                HeaderText = "Kích thước",
+                Width = 90,
+                ReadOnly = true
+            };
             colType = new DataGridViewTextBoxColumn { HeaderText = "Loại", Width = 55, ReadOnly = true };
             colName = new DataGridViewTextBoxColumn { HeaderText = "Tên file", ReadOnly = true, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill };
             colSize = new DataGridViewTextBoxColumn { HeaderText = "Kích thước", Width = 90, ReadOnly = true };
@@ -411,10 +441,18 @@ namespace ClientApp
             colRetry = new DataGridViewButtonColumn { HeaderText = "", Text = "Thử lại", UseColumnTextForButtonValue = true, Width = 64, FlatStyle = FlatStyle.Flat };
             colDelete = new DataGridViewButtonColumn { HeaderText = "", Text = "Xóa", UseColumnTextForButtonValue = true, Width = 50, FlatStyle = FlatStyle.Flat };
 
-            dgv.Columns.AddRange(colType, colName, colSize, colStatus, colProgress, colTransferred, colSpeed, colRetry, colDelete);
+            dgv.Columns.AddRange(colSelect, colType, colName, colSize, colStatus, colProgress, colTransferred, colSpeed, colRetry, colDelete);
 
             dgv.CellClick += Dgv_CellClick;
             dgv.CellPainting += Dgv_CellPainting;
+            dgv.CurrentCellDirtyStateChanged += (s, e) =>
+            {
+                if (dgv.IsCurrentCellDirty &&
+                    dgv.CurrentCell is DataGridViewCheckBoxCell)
+                {
+                    dgv.CommitEdit(DataGridViewDataErrorContexts.Commit);
+                }
+            };
         }
 
         // ══════════════════════════════════════════════════════════════
@@ -1027,11 +1065,12 @@ namespace ClientApp
 
         private void ToggleSelectAll()
         {
-            bool anyUnselected = dgv.Rows.Cast<DataGridViewRow>().Any(r => !r.Selected);
+            bool anyUnchecked = dgv.Rows.Cast<DataGridViewRow>()
+                .Any(row => !Convert.ToBoolean(row.Cells[colSelect.Index].Value));
 
             foreach (DataGridViewRow row in dgv.Rows)
             {
-                row.Selected = anyUnselected;
+                row.Cells[colSelect.Index].Value = anyUnchecked;
             }
         }
 
@@ -1041,8 +1080,16 @@ namespace ClientApp
         private async System.Threading.Tasks.Task btnDownloadSelected_Click()
         {
             var selected = _items.Values
-                .Where(IsRowSelected)
-                .ToList();
+              .Where(item =>
+              {
+                 var row = dgv.Rows
+                   .Cast<DataGridViewRow>()
+                   .FirstOrDefault(r => r.Tag == item);
+
+                 return row != null &&
+                        Convert.ToBoolean(row.Cells[colSelect.Index].Value);
+              })
+              .ToList();
 
             if (selected.Count == 0)
             {
