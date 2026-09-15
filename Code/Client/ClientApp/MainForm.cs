@@ -499,6 +499,12 @@ namespace ClientApp
             _connectionMonitorTimer.Stop();
             _progressRefreshTimer.Stop();
 
+            // QUAN TRỌNG: hủy ngay download đang chạy dở (nếu có) khi ngắt kết nối —
+            // nếu không, task tải đang chạy sẽ tiếp tục âm thầm chạy tới hết bằng
+            // TcpClient CŨ của nó (không hề bị ảnh hưởng bởi việc "ngắt kết nối" ở đây),
+            // và còn giữ khóa file (FileShare.None) khiến lần tải lại sau này bị lỗi.
+            _downloadCts?.Cancel();
+
             try { _clientService?.Disconnect(); } catch { }
 
             _clientService = null;
@@ -1143,10 +1149,25 @@ namespace ClientApp
 
                     try
                     {
-                        await _downloadService!.ExecuteDownloadAsync(item);
-                        successCount++;
+                        await _downloadService!.ExecuteDownloadAsync(item, cancellationToken: _downloadCts.Token);
                     }
                     catch
+                    {
+                        // Phòng hờ — trong đa số trường hợp DownloadService đã tự bắt lỗi
+                        // nội bộ và không ném ra ngoài, nên nhánh này ít khi được chạy tới.
+                        item.Status = DownloadStatus.Failed;
+                    }
+
+                    // QUAN TRỌNG: xét kết quả THẬT dựa trên item.Status thay vì dựa vào
+                    // việc có exception hay không — vì ExecuteDownloadAsync tự bắt lỗi bên
+                    // trong (kể cả khi bị hủy giữa chừng) và KHÔNG ném ra ngoài, nên đoạn
+                    // try/catch ở trên gần như không bao giờ bắt được gì, khiến trước đây
+                    // successCount luôn tăng dù file thực tế bị đánh dấu Lỗi.
+                    if (item.Status == DownloadStatus.Completed)
+                    {
+                        successCount++;
+                    }
+                    else
                     {
                         item.Status = DownloadStatus.Failed;
                         failCount++;

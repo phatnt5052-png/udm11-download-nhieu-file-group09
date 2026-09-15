@@ -86,18 +86,20 @@ namespace ClientApp.Services
 
         public async Task DownloadFileFromServerAsync(
             string fileName,
-            Func<Stream, long, Task> dataHandler)
+            Func<Stream, long, Task> dataHandler,
+            CancellationToken cancellationToken = default)
         {
             try
             {
                 using var client = new TcpClient();
-                using var connectCts = new CancellationTokenSource(ConnectTimeout);
+                using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                connectCts.CancelAfter(ConnectTimeout);
 
                 try
                 {
                     await client.ConnectAsync(_ip, _port, connectCts.Token);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
                     throw new IOException($"Không thể kết nối tới Server {_ip}:{_port} (hết thời gian chờ).");
                 }
@@ -139,6 +141,12 @@ namespace ClientApp.Services
             catch (FileNotFoundException)
             {
                 throw; // Đã set IsConnected = true ở trên, không phải lỗi mất kết nối
+            }
+            catch (OperationCanceledException)
+            {
+                // Người dùng chủ động dừng tải (nút "Dừng tải") hoặc bấm "Ngắt kết nối" —
+                // đây KHÔNG phải lỗi mất kết nối tới Server, không đổi cờ IsConnected.
+                throw;
             }
             catch
             {

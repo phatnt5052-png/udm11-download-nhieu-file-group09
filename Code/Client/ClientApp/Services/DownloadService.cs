@@ -29,9 +29,9 @@ namespace ClientApp.Services
             }
         }
 
-        public async Task ExecuteDownloadAsync(DownloadItem item, Action<DownloadItem>? onProgress = null)
+        public async Task ExecuteDownloadAsync(DownloadItem item, Action<DownloadItem>? onProgress = null, CancellationToken cancellationToken = default)
         {
-            await _semaphore.WaitAsync();
+            await _semaphore.WaitAsync(cancellationToken);
             item.Status = DownloadStatus.Downloading;
             var progressService = new ProgressService(item);
 
@@ -67,15 +67,20 @@ namespace ClientApp.Services
                     // ĐỌC ĐÚNG SỐ BYTE CỦA FILE (KHÔNG CHỜ EOF ĐỂ TRÁNH TREO)
                     while (totalBytesRead < size)
                     {
+                        // Kiểm tra hủy TRƯỚC MỖI LẦN ĐỌC — để việc bấm "Dừng tải"
+                        // hoặc ngắt kết nối dừng NGAY GIỮA CHỪNG file đang tải,
+                        // thay vì tải nốt tới 100% mới dừng.
+                        cancellationToken.ThrowIfCancellationRequested();
+
                         int bytesToRead = (int)Math.Min(buffer.Length, size - totalBytesRead);
-                        int bytesRead = await networkStream.ReadAsync(buffer, 0, bytesToRead);
+                        int bytesRead = await networkStream.ReadAsync(buffer, 0, bytesToRead, cancellationToken);
 
                         if (bytesRead == 0)
                         {
                             throw new IOException("Server ngắt kết nối đột ngột khi chưa gửi đủ file.");
                         }
 
-                        await fileStream.WriteAsync(buffer, 0, bytesRead);
+                        await fileStream.WriteAsync(buffer, 0, bytesRead, cancellationToken);
                         totalBytesRead += bytesRead;
 
                         // Cập nhật tiến độ dữ liệu
@@ -84,7 +89,7 @@ namespace ClientApp.Services
                         // Báo UI cập nhật tiến trình realtime
                         onProgress?.Invoke(item);
                     }
-                });
+                }, cancellationToken);
 
                 item.Status = DownloadStatus.Completed;
                 item.Progress = 100;

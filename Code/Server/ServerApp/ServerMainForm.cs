@@ -17,6 +17,11 @@ namespace ServerApp
 
         private bool isRunning = false;
 
+        // Theo dõi các client đang kết nối để có thể ngắt ngay khi bấm Stop —
+        // nếu không, một client đang tải dở sẽ không hề hay biết Server đã dừng.
+        private readonly System.Collections.Generic.List<TcpClient> connectedClients = new();
+        private readonly object connectedClientsLock = new();
+
         public ServerMainForm()
         {
             InitializeComponent();
@@ -242,6 +247,11 @@ namespace ServerApp
 
                 AddLog($"Client kết nối: {clientName}");
 
+                lock (connectedClientsLock)
+                {
+                    connectedClients.Add(client);
+                }
+
                 using (client)
                 using (NetworkStream stream = client.GetStream())
                 {
@@ -329,6 +339,11 @@ namespace ServerApp
             }
             finally
             {
+                lock (connectedClientsLock)
+                {
+                    connectedClients.Remove(client);
+                }
+
                 AddLog(
                     $"Client ngắt kết nối: {clientName}"
                 );
@@ -533,6 +548,25 @@ namespace ServerApp
 
                 server?.Stop();
                 server = null;
+
+                // Ngắt ngay tất cả client đang kết nối/đang tải dở
+                // để họ nhận được lỗi thay vì bị treo hoặc tải nốt như không có gì xảy ra.
+                lock (connectedClientsLock)
+                {
+                    foreach (TcpClient c in connectedClients)
+                    {
+                        try
+                        {
+                            c.Close();
+                        }
+                        catch
+                        {
+                            // Bỏ qua lỗi khi đóng client đã ngắt sẵn
+                        }
+                    }
+
+                    connectedClients.Clear();
+                }
 
                 lblStatus.Text = "Server Offline";
                 lblStatus.ForeColor = Color.Red;
