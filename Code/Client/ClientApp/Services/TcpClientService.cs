@@ -87,7 +87,8 @@ namespace ClientApp.Services
         public async Task DownloadFileFromServerAsync(
             string fileName,
             Func<Stream, long, Task> dataHandler,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            long resumeOffset = 0)
         {
             try
             {
@@ -108,20 +109,25 @@ namespace ClientApp.Services
 
                 await WriteStringAsync(stream, "GET");
                 await WriteStringAsync(stream, fileName);
+                // Vị trí byte muốn Server tiếp tục gửi từ đó (0 = tải từ đầu).
+                await WriteInt64Async(stream, resumeOffset);
 
                 string response = await ReadStringAsync(stream);
 
                 if (response == "OK")
                 {
                     string serverFileName = await ReadStringAsync(stream);
-                    long fileSize = await ReadInt64Async(stream);
 
-                    if (fileSize < 0)
+                    // Server trả về SỐ BYTE CÒN LẠI SẼ GỬI (không phải tổng dung lượng
+                    // file) — khi resumeOffset > 0, đây là phần còn thiếu.
+                    long remainingSize = await ReadInt64Async(stream);
+
+                    if (remainingSize < 0)
                     {
                         throw new IOException("Kích thước file từ Server không hợp lệ.");
                     }
 
-                    await dataHandler(stream, fileSize);
+                    await dataHandler(stream, remainingSize);
                     IsConnected = true;
                 }
                 else if (response == "ERROR")
@@ -201,6 +207,12 @@ namespace ClientApp.Services
             byte[] data = new byte[8];
             await ReadExactAsync(stream, data, 0, 8);
             return BitConverter.ToInt64(data, 0);
+        }
+
+        private static async Task WriteInt64Async(NetworkStream stream, long value)
+        {
+            byte[] data = BitConverter.GetBytes(value);
+            await stream.WriteAsync(data, 0, data.Length);
         }
 
         private static async Task ReadExactAsync(NetworkStream stream, byte[] buffer, int offset, int count)

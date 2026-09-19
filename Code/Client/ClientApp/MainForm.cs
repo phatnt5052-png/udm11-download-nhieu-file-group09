@@ -29,6 +29,12 @@ namespace ClientApp
         private readonly Dictionary<string, DownloadItem> _items = new();
         private readonly HashSet<string> _hiddenFiles = new();
 
+        // Token hủy RIÊNG cho từng file đang tải, để có thể Hủy một file cụ thể
+        // mà không ảnh hưởng tới các file khác đang tải đồng thời trong cùng lượt.
+        // Mỗi token này được "link" (CreateLinkedTokenSource) từ _downloadCts của
+        // cả lượt tải, nên bấm "Dừng tải" (hủy toàn bộ) vẫn hoạt động như cũ.
+        private readonly Dictionary<DownloadItem, System.Threading.CancellationTokenSource> _itemCts = new();
+
         // ── Controls Top ───────────────────────────────────────────────
         private Panel pnlTop = null!;
         private Label lblBrand = null!;
@@ -54,6 +60,7 @@ namespace ClientApp
         private DataGridViewTextBoxColumn colProgress = null!;
         private DataGridViewTextBoxColumn colTransferred = null!;
         private DataGridViewTextBoxColumn colSpeed = null!;
+        private DataGridViewButtonColumn colCancel = null!;
         private DataGridViewButtonColumn colRetry = null!;
         private DataGridViewButtonColumn colDelete = null!;
 
@@ -418,10 +425,11 @@ namespace ClientApp
             colProgress = new DataGridViewTextBoxColumn { HeaderText = "Tiến độ (%)", Width = 100, ReadOnly = true };
             colTransferred = new DataGridViewTextBoxColumn { HeaderText = "Đã tải", Width = 150, ReadOnly = true };
             colSpeed = new DataGridViewTextBoxColumn { HeaderText = "Tốc độ", Width = 90, ReadOnly = true };
+            colCancel = new DataGridViewButtonColumn { HeaderText = "", Text = "Hủy", UseColumnTextForButtonValue = true, Width = 50, FlatStyle = FlatStyle.Flat };
             colRetry = new DataGridViewButtonColumn { HeaderText = "", Text = "Thử lại", UseColumnTextForButtonValue = true, Width = 64, FlatStyle = FlatStyle.Flat };
             colDelete = new DataGridViewButtonColumn { HeaderText = "", Text = "Xóa", UseColumnTextForButtonValue = true, Width = 50, FlatStyle = FlatStyle.Flat };
 
-            dgv.Columns.AddRange(colSelect, colType, colName, colSize, colStatus, colProgress, colTransferred, colSpeed, colRetry, colDelete);
+            dgv.Columns.AddRange(colSelect, colType, colName, colSize, colStatus, colProgress, colTransferred, colSpeed, colCancel, colRetry, colDelete);
 
             dgv.CellClick += Dgv_CellClick;
             dgv.CellPainting += Dgv_CellPainting;
@@ -673,7 +681,7 @@ namespace ClientApp
                 }
             }
 
-            // SỬA ĐỔI QUAN TRỌNG 1: Commit thay đổi CheckBox ngay lập tức khi người dùng tick vào ô CheckBox
+            // Commit thay đổi CheckBox ngay lập tức khi người dùng tick vào ô CheckBox
             dgvDialog.CurrentCellDirtyStateChanged += (s, e) =>
             {
                 if (dgvDialog.IsCurrentCellDirty && dgvDialog.CurrentCell is DataGridViewCheckBoxCell)
@@ -682,7 +690,7 @@ namespace ClientApp
                 }
             };
 
-            // SỬA ĐỔI QUAN TRỌNG 2: Tự động đảo trạng thái CheckBox khi click vào bất kỳ ô nào trên dòng (ngoại trừ ô checkbox)
+            // Tự động đảo trạng thái CheckBox khi click vào bất kỳ ô nào trên dòng (ngoại trừ ô checkbox)
             dgvDialog.CellClick += (s, e) =>
             {
                 if (e.RowIndex >= 0 && e.ColumnIndex != colChk.Index)
@@ -769,7 +777,7 @@ namespace ClientApp
 
             if (dialog.ShowDialog(this) == DialogResult.OK)
             {
-                // SỬA ĐỔI QUAN TRỌNG 3: Chốt toàn bộ dữ liệu đang sửa trước khi đọc danh sách
+                // Chốt toàn bộ dữ liệu đang sửa trước khi đọc danh sách
                 dgvDialog.EndEdit();
 
                 int addedCount = 0;
@@ -837,12 +845,12 @@ namespace ClientApp
 
             try
             {
-                List<FileItem> files = await _clientService.GetFileListAsync();
+                await _clientService.GetFileListAsync();
 
-                // Server vẫn hoạt động hoặc đã kết nối lại
+                // Server vẫn hoạt động hoặc đã kết nối lại. Không đụng gì tới bảng dữ
+                // liệu ở đây nữa (xem lý do trong ghi chú TC_D26) — lệnh gọi này chỉ
+                // dùng làm "nhịp tim" để phát hiện mất kết nối.
                 _serverDisconnectedAt = null;
-
-                SyncGridWithServerFiles(files);
             }
             catch
             {
@@ -892,20 +900,18 @@ namespace ClientApp
         // ══════════════════════════════════════════════════════════════
         //  GRID DATA SYNC
         // ══════════════════════════════════════════════════════════════
-        private void SyncGridWithServerFiles(List<FileItem> serverFiles)
-        {
-            var serverNames = serverFiles.Select(f => f.FileName).ToHashSet();
-
-            foreach (string staleName in _items.Keys.Except(serverNames).ToList())
-            {
-                _items.Remove(staleName);
-
-                var row = dgv.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => (r.Tag as DownloadItem)?.FileName == staleName);
-                if (row != null) dgv.Rows.Remove(row);
-            }
-
-            UpdateSummary();
-        }
+        //
+        // Lưu ý (fix TC_D26): trước đây có 1 hàm SyncGridWithServerFiles chạy theo
+        // timer mỗi 5 giây, tự động xóa khỏi UI các item đang "Chờ" nếu Server không
+        // còn thấy file đó nữa. Vấn đề: nếu timer tình cờ chạy đúng lúc file vừa bị
+        // xóa bên Server nhưng người dùng CHƯA KỊP bấm "Tải" (item vẫn "Chờ"), nó sẽ
+        // âm thầm xóa luôn dòng đó khỏi bảng — tái hiện đúng lỗi TC_D26 ("dòng biến
+        // mất thay vì báo Lỗi"), chỉ khác đường đi so với lỗi gốc.
+        // Đã bỏ hẳn hàm đó: giờ không có gì tự động xóa item khỏi UI theo trạng thái
+        // Server nữa. Trạng thái 1 file chỉ do hành động tải THẬT SỰ quyết định — nếu
+        // file không còn tồn tại, Server trả lỗi cho request GET và DownloadService
+        // sẽ set item.Status = Failed, đúng như TC_D26 kỳ vọng. Dọn dẹp thủ công vẫn
+        // dùng nút "Xóa" / "Xóa tất cả" như bình thường.
 
         private void AddFileRow(FileItem file)
         {
@@ -951,6 +957,7 @@ namespace ClientApp
 
         private void RefreshRowVisual(DataGridViewRow row, DownloadItem item)
         {
+            row.Cells[colName.Index].Value = item.FileName;
             row.Cells[colStatus.Index].Value = StatusLabel(item.Status);
             row.Cells[colStatus.Index].Style.ForeColor = StatusColor(item.Status);
             row.Cells[colProgress.Index].Value = $"{item.Progress:F0}%";
@@ -1002,8 +1009,24 @@ namespace ClientApp
             var row = dgv.Rows[e.RowIndex];
             if (row.Tag is not DownloadItem item) return;
 
-            if (e.ColumnIndex == colRetry.Index)
+            if (e.ColumnIndex == colCancel.Index)
             {
+                if (item.Status != DownloadStatus.Downloading)
+                {
+                    MessageBox.Show($"'{item.FileName}' hiện không ở trạng thái đang tải để hủy.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                CancelItemDownload(item);
+            }
+            else if (e.ColumnIndex == colRetry.Index)
+            {
+                if (item.Status == DownloadStatus.Downloading)
+                {
+                    MessageBox.Show($"'{item.FileName}' đang được tải, vui lòng đợi hoặc bấm Hủy trước khi Thử lại.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
                 _ = DownloadItemsAsync(new List<DownloadItem> { item });
             }
             else if (e.ColumnIndex == colDelete.Index)
@@ -1057,17 +1080,19 @@ namespace ClientApp
             e.Handled = true;
         }
 
+        // Cho phép "Chọn tất cả" gồm cả file đã Hoàn thành — 1 file đã tải xong vẫn
+        // tick chọn và tải lại được bình thường (tạo thêm 1 bản sao đổi tên, giống
+        // cách trình duyệt xử lý file trùng tên), không còn bị loại trừ khỏi thao
+        // tác chọn hàng loạt nữa.
         private void ToggleSelectAll()
         {
             bool anyUnchecked = dgv.Rows.Cast<DataGridViewRow>()
-                .Where(row => row.Tag is DownloadItem item &&
-                              item.Status != DownloadStatus.Completed)
+                .Where(row => row.Tag is DownloadItem)
                 .Any(row => !Convert.ToBoolean(row.Cells[colSelect.Index].Value));
 
             foreach (DataGridViewRow row in dgv.Rows)
             {
-                if (row.Tag is DownloadItem item &&
-                    item.Status != DownloadStatus.Completed)
+                if (row.Tag is DownloadItem)
                 {
                     row.Cells[colSelect.Index].Value = anyUnchecked;
                 }
@@ -1126,68 +1151,42 @@ namespace ClientApp
             _downloadCts = new System.Threading.CancellationTokenSource();
             SetDownloadButtonToStopMode(true);
 
-            int successCount = 0;
-            int failCount = 0;
-            bool stoppedEarly = false;
-            bool connectionLost = false;
+            // QUAN TRỌNG (fix TC_D17/TC_D18): trước đây các file được tải TUẦN TỰ
+            // (await bên trong foreach), khiến file sau phải chờ file trước tải xong
+            // mới bắt đầu — dù DownloadService đã có sẵn SemaphoreSlim cho phép chạy
+            // đồng thời. Giờ khởi chạy Task cho TẤT CẢ item cùng lúc và chờ bằng
+            // Task.WhenAll; số lượng thực sự chạy song song vẫn được giới hạn bởi
+            // SemaphoreSlim bên trong DownloadService (không bị "tải tràn").
+            //
+            // QUAN TRỌNG (fix TC_D20): mỗi item được cấp một CancellationTokenSource
+            // RIÊNG (link từ _downloadCts của cả lượt tải), nên có thể Hủy đúng MỘT
+            // file cụ thể (gọi CancelItemDownload) mà không ảnh hưởng các file khác
+            // đang tải đồng thời. Bấm "Dừng tải" (_downloadCts.Cancel()) vẫn hủy được
+            // toàn bộ vì mọi token riêng đều được link từ token chung này.
+            var tasks = new List<System.Threading.Tasks.Task>();
+
+            foreach (DownloadItem item in toDownload)
+            {
+                var itemCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(_downloadCts.Token);
+                _itemCts[item] = itemCts;
+                tasks.Add(RunSingleDownloadAsync(item, itemCts.Token));
+            }
 
             try
             {
-                foreach (DownloadItem item in toDownload)
-                {
-                    if (_downloadCts.IsCancellationRequested)
-                    {
-                        stoppedEarly = true;
-                        break;
-                    }
-
-                    if (!IsClientConnected())
-                    {
-                        connectionLost = true;
-                        break;
-                    }
-
-                    try
-                    {
-                        await _downloadService!.ExecuteDownloadAsync(item, cancellationToken: _downloadCts.Token);
-                    }
-                    catch
-                    {
-                        // Phòng hờ — trong đa số trường hợp DownloadService đã tự bắt lỗi
-                        // nội bộ và không ném ra ngoài, nên nhánh này ít khi được chạy tới.
-                        item.Status = DownloadStatus.Failed;
-                    }
-
-                    // QUAN TRỌNG: xét kết quả THẬT dựa trên item.Status thay vì dựa vào
-                    // việc có exception hay không — vì ExecuteDownloadAsync tự bắt lỗi bên
-                    // trong (kể cả khi bị hủy giữa chừng) và KHÔNG ném ra ngoài, nên đoạn
-                    // try/catch ở trên gần như không bao giờ bắt được gì, khiến trước đây
-                    // successCount luôn tăng dù file thực tế bị đánh dấu Lỗi.
-                    if (item.Status == DownloadStatus.Completed)
-                    {
-                        successCount++;
-                    }
-                    else
-                    {
-                        item.Status = DownloadStatus.Failed;
-                        failCount++;
-
-                        if (!IsClientConnected())
-                        {
-                            connectionLost = true;
-                            RefreshAllRowVisuals();
-                            break;
-                        }
-                    }
-
-                    DeselectRow(item);
-                    MoveRowToTop(item);
-
-                    RefreshAllRowVisuals();
-                }
+                await System.Threading.Tasks.Task.WhenAll(tasks);
             }
             finally
             {
+                foreach (DownloadItem item in toDownload)
+                {
+                    if (_itemCts.TryGetValue(item, out var cts))
+                    {
+                        _itemCts.Remove(item);
+                        cts.Dispose();
+                    }
+                }
+
                 _isDownloadInProgress = false;
                 _progressRefreshTimer.Stop();
                 RefreshAllRowVisuals();
@@ -1201,6 +1200,14 @@ namespace ClientApp
                 btnDeleteAll.Enabled = true;
             }
 
+            // Tổng hợp kết quả THẬT dựa trên item.Status của từng file sau khi tất cả
+            // đã chạy xong — vì tải song song nên không thể "break" giữa vòng lặp như
+            // trước, phải xét lại toàn bộ sau khi Task.WhenAll hoàn tất.
+            int successCount = toDownload.Count(i => i.Status == DownloadStatus.Completed);
+            int failCount = toDownload.Count(i => i.Status != DownloadStatus.Completed);
+            bool stoppedByUser = _downloadCts?.IsCancellationRequested ?? false;
+            bool connectionLost = !IsClientConnected();
+
             if (connectionLost)
             {
                 DisconnectClient();
@@ -1208,10 +1215,10 @@ namespace ClientApp
                     $"Mất kết nối tới Server giữa chừng.\nĐã tải xong: {successCount}   |   Lỗi: {failCount}",
                     "Mất kết nối", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-            else if (stoppedEarly)
+            else if (stoppedByUser)
             {
                 MessageBox.Show(
-                    $"Đã dừng tải theo yêu cầu.\nĐã tải xong: {successCount}   |   Lỗi: {failCount}   |   Chưa tải: {toDownload.Count - successCount - failCount}",
+                    $"Đã dừng tải theo yêu cầu.\nĐã tải xong: {successCount}   |   Lỗi/Đã hủy: {failCount}",
                     "Đã dừng", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             else
@@ -1219,6 +1226,37 @@ namespace ClientApp
                 MessageBox.Show(
                     $"Hoàn tất.\nThành công: {successCount}   |   Lỗi: {failCount}",
                     "Tải xuống", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        // Chạy tải cho ĐÚNG MỘT file, dùng token riêng của file đó. Vì DownloadService.
+        // ExecuteDownloadAsync tự bắt mọi lỗi bên trong (kể cả bị hủy) và không ném ra
+        // ngoài, nhánh catch dưới đây chỉ thật sự chạy tới trong trường hợp hiếm: bị hủy
+        // NGAY TRONG LÚC CÒN ĐANG CHỜ SEMAPHORE (chưa kịp bắt đầu tải), vì lúc đó
+        // ExecuteDownloadAsync chưa vào tới try/catch nội bộ của nó để tự set trạng thái.
+        private async System.Threading.Tasks.Task RunSingleDownloadAsync(DownloadItem item, System.Threading.CancellationToken token)
+        {
+            try
+            {
+                await _downloadService!.ExecuteDownloadAsync(item, cancellationToken: token);
+            }
+            catch
+            {
+                item.Status = DownloadStatus.Failed;
+                item.SpeedMbps = 0;
+            }
+
+            DeselectRow(item);
+            MoveRowToTop(item);
+            RefreshAllRowVisuals();
+        }
+
+        // Hủy RIÊNG một file cụ thể đang tải, không ảnh hưởng các file khác trong cùng lượt.
+        private void CancelItemDownload(DownloadItem item)
+        {
+            if (_itemCts.TryGetValue(item, out var cts))
+            {
+                cts.Cancel();
             }
         }
 
@@ -1251,11 +1289,10 @@ namespace ClientApp
                 // Bỏ chọn dòng
                 row.Selected = false;
 
-                // Nếu file đã hoàn thành thì không cho tick lại
-                if (item.Status == DownloadStatus.Completed)
-                {
-                    row.Cells[colSelect.Index].ReadOnly = true;
-                }
+                // KHÔNG khóa checkbox nữa — 1 file đã "Hoàn thành" vẫn tick chọn và
+                // tải lại được bình thường. Vì DownloadService dùng OverwriteRule.Rename
+                // theo mặc định, tải lại sẽ tự tạo thêm 1 bản sao (tên có timestamp)
+                // thay vì ghi đè, giống cách trình duyệt xử lý file tải trùng tên.
             }
         }
 
@@ -1273,8 +1310,24 @@ namespace ClientApp
                 return;
             }
 
-            _hiddenFiles.Add(item.FileName);
-            _items.Remove(item.FileName);
+            // QUAN TRỌNG: không dùng thẳng item.FileName làm khóa Dictionary nữa.
+            // Khi 1 file trùng tên được tải lại (OverwriteRule.Rename trong
+            // DownloadService), item.FileName bị đổi sang tên mới có timestamp để
+            // hiển thị — nhưng khóa gốc trong _items vẫn là TÊN FILE THẬT trên Server
+            // (không đổi). Nếu xoá bằng item.FileName lúc này sẽ xoá NHẦM/không xoá
+            // được gì (Dictionary.Remove trên khoá không tồn tại), khiến _items giữ
+            // lại 1 mục "ma" dù dòng trên UI đã biến mất.
+            string? originalKey = _items.FirstOrDefault(kv => kv.Value == item).Key;
+
+            if (originalKey != null)
+            {
+                _hiddenFiles.Add(originalKey);
+                _items.Remove(originalKey);
+            }
+
+            // Dọn luôn file ".partial" dở dang (nếu có) của item này — tránh để lại
+            // rác trong thư mục Downloads khi người dùng đã chủ động xóa khỏi hàng đợi.
+            _downloadService?.DeletePartialFile(item);
 
             var row = dgv.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag == item);
             if (row != null) dgv.Rows.Remove(row);

@@ -287,6 +287,11 @@ namespace ServerApp
                             string? fileName =
                                 await ReadStringAsync(stream);
 
+                            // Vị trí byte muốn tải TIẾP (0 = tải từ đầu như bình thường).
+                            // Cho phép Client tiếp tục 1 file bị dang dở thay vì phải
+                            // tải lại từ 0% mỗi khi Thử lại.
+                            long resumeOffset = await ReadInt64Async(stream);
+
                             if (string.IsNullOrWhiteSpace(fileName))
                             {
                                 await WriteStringAsync(
@@ -305,7 +310,8 @@ namespace ServerApp
                             await SendFileAsync(
                                 stream,
                                 fileName,
-                                clientName
+                                clientName,
+                                resumeOffset
                             );
                         }
 
@@ -401,7 +407,8 @@ namespace ServerApp
         private async Task SendFileAsync(
             NetworkStream stream,
             string fileName,
-            string clientName)
+            string clientName,
+            long resumeOffset = 0)
         {
             try
             {
@@ -460,6 +467,15 @@ namespace ServerApp
 
                 FileInfo fileInfo = new FileInfo(fullPath);
 
+                // Chặn offset không hợp lệ (âm hoặc lớn hơn cả file) —
+                // rơi về 0 để gửi lại từ đầu cho an toàn.
+                if (resumeOffset < 0 || resumeOffset > fileInfo.Length)
+                {
+                    resumeOffset = 0;
+                }
+
+                long remainingBytes = fileInfo.Length - resumeOffset;
+
                 // Gửi trạng thái OK
                 await WriteStringAsync(
                     stream,
@@ -472,14 +488,17 @@ namespace ServerApp
                     fileInfo.Name
                 );
 
-                // Gửi kích thước
+                // Gửi số byte SẼ GỬI TỪ ĐÂY (không phải tổng dung lượng file) —
+                // để Client cộng dồn đúng với phần đã tải trước đó lúc Resume.
                 await WriteInt64Async(
                     stream,
-                    fileInfo.Length
+                    remainingBytes
                 );
 
                 AddLog(
-                    $"Bắt đầu gửi {fileInfo.Name} cho {clientName}."
+                    resumeOffset > 0
+                        ? $"Tiếp tục gửi {fileInfo.Name} cho {clientName} từ byte {resumeOffset}."
+                        : $"Bắt đầu gửi {fileInfo.Name} cho {clientName}."
                 );
 
                 byte[] buffer = new byte[64 * 1024];
@@ -495,6 +514,11 @@ namespace ServerApp
                         bufferSize: 64 * 1024,
                         useAsync: true
                     );
+
+                if (resumeOffset > 0)
+                {
+                    fileStream.Seek(resumeOffset, SeekOrigin.Begin);
+                }
 
                 int bytesRead;
 
