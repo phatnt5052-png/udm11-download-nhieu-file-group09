@@ -575,21 +575,14 @@ namespace ServerApp
 
                 // Ngắt ngay tất cả client đang kết nối/đang tải dở
                 // để họ nhận được lỗi thay vì bị treo hoặc tải nốt như không có gì xảy ra.
+                // TC_D27: Không đóng cứng các Client khi Server dừng.
+                // Client sẽ tự phát hiện Server mất kết nối thông qua heartbeat
+                // và tự đóng sau 25 giây theo quy trình của Client.
                 lock (connectedClientsLock)
                 {
-                    foreach (TcpClient c in connectedClients)
-                    {
-                        try
-                        {
-                            c.Close();
-                        }
-                        catch
-                        {
-                            // Bỏ qua lỗi khi đóng client đã ngắt sẵn
-                        }
-                    }
-
-                    connectedClients.Clear();
+                    // Cố ý không gọi Close() tại đây để tránh kill cứng Client.
+                    // Giữ danh sách kết nối để HandleClientAsync tự loại bỏ
+                    // khi Client phát hiện Server đã dừng.
                 }
 
                 lblStatus.Text = "Server Offline";
