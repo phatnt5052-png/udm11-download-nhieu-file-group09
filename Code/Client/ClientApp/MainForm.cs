@@ -24,7 +24,6 @@ namespace ClientApp
         // Visual Studio, không sợ quên copy khi đóng gói/deploy .exe.
         private const string UthLogoBase64 =
             "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";
-
         // ── Services ───────────────────────────────────────────────────
         private TcpClientService? _clientService;
         private DownloadService? _downloadService;
@@ -94,6 +93,10 @@ namespace ClientApp
 
             UpdateConnectionUi();
             UpdateSummary();
+
+            // Chặn không cho cửa sổ bị kéo nhỏ hơn mức đủ để hiển thị toàn bộ nút
+            // của top bar và bottom bar (xem giải thích chi tiết tại EnsureMinimumWindowSize).
+            EnsureMinimumWindowSize();
         }
 
         // ══════════════════════════════════════════════════════════════
@@ -362,61 +365,166 @@ namespace ClientApp
             Controls.Add(pnlTop);
         }
 
+        // ══════════════════════════════════════════════════════════════
+        //  LAYOUT DẠNG "WRAP" (tự động xuống dòng khi không đủ chỗ ngang)
+        // ══════════════════════════════════════════════════════════════
+        //
+        // Thay vì định vị control theo tọa độ cố định trên MỘT hàng ngang duy
+        // nhất (cách cũ khiến control bị đẩy ra ngoài vùng nhìn thấy và "biến
+        // mất" khi cửa sổ hẹp lại), hàm dùng chung này xếp control theo kiểu
+        // "chảy" từ trái sang phải: hết chỗ trên hàng hiện tại thì tự động
+        // xuống hàng dưới, panel tự tăng chiều cao theo số hàng thực tế cần
+        // dùng. Nhờ vậy không control nào bị mất, chỉ là chúng xếp thành nhiều
+        // hàng hơn khi cửa sổ hẹp.
+        //
+        // apply = true  : thực sự gán Location cho từng control (dùng khi vẽ layout thật).
+        // apply = false : chỉ tính toán, không đụng vào Location (dùng để "đo thử"
+        //                 chiều cao cần thiết ở một chiều rộng giả định, phục vụ
+        //                 tính MinimumSize — xem EnsureMinimumWindowSize).
+        private static int LayoutFlowRow(
+            int panelWidth,
+            int marginX,
+            int rowHeight,
+            int vGap,
+            IReadOnlyList<(Control Control, int GapAfter)> items,
+            bool apply)
+        {
+            int curX = marginX;
+            int curY = 8;
+            bool isFirstOnRow = true;
+
+            foreach (var (control, gapAfter) in items)
+            {
+                int w = control.Width;
+
+                // Hết chỗ trên hàng hiện tại (và đây không phải control đầu hàng) -> xuống hàng mới
+                if (!isFirstOnRow && curX + w > panelWidth - marginX)
+                {
+                    curX = marginX;
+                    curY += rowHeight + vGap;
+                    isFirstOnRow = true;
+                }
+
+                if (apply)
+                {
+                    control.Location = new Point(curX, curY + (rowHeight - control.Height) / 2);
+                }
+
+                curX += w + gapAfter;
+                isFirstOnRow = false;
+            }
+
+            return curY + rowHeight + 8; // tổng chiều cao cần dùng
+        }
+
+        private List<(Control, int)> BuildTopFlowItems()
+        {
+            var items = new List<(Control, int)>();
+
+            if (logoBox.Image != null)
+                items.Add((logoBox, 14));
+
+            items.Add((lblBrand, 18));
+            items.Add((lblIp, 4));
+            items.Add((txtServerIp, 14));
+            items.Add((lblPort, 4));
+            items.Add((txtPort, 14));
+            items.Add((btnConnect, 6));
+            items.Add((btnDisconnect, 6));
+            items.Add((btnTestConnection, 6));
+            items.Add((btnOpenFolder, 6));
+            items.Add((btnViewServerFiles, 14));
+            items.Add((lblStatusDot, 4));
+            items.Add((lblStatusText, 0));
+
+            return items;
+        }
+
+        private List<(Control, int)> BuildBottomFlowItems()
+        {
+            return new List<(Control, int)>
+            {
+                (lblSummary, 12),
+                (btnSelectAll, 6),
+                (btnDeleteSelected, 6),
+                (btnDeleteAll, 6),
+                (btnRetryFailed, 6),
+                (btnDownloadSelected, 0),
+            };
+        }
+
         private void LayoutTopControls()
         {
             if (pnlTop == null || lblBrand == null) return;
 
-            int curX = 16;
-            int midY = pnlTop.Height / 2;
+            if (logoBox.Image == null)
+                logoBox.Size = Size.Empty; // logo không tải được -> không chiếm chỗ
 
-            // Logo (nếu load được ảnh) đứng đầu tiên, các control còn lại xếp
-            // tiếp sau nó thay vì bắt đầu từ mép trái panel.
-            if (logoBox.Image != null)
-            {
-                logoBox.Location = new Point(curX, midY - logoBox.Height / 2);
-                curX = logoBox.Right + 14;
-            }
-            else
-            {
-                logoBox.Size = Size.Empty;
-            }
+            int neededHeight = LayoutFlowRow(pnlTop.Width, 16, 34, 4, BuildTopFlowItems(), apply: true);
 
-            lblBrand.Location = new Point(curX, midY - lblBrand.PreferredSize.Height / 2);
-            curX = lblBrand.Right + 18;
-
-            lblIp.Location = new Point(curX, midY - lblIp.PreferredSize.Height / 2);
-            curX = lblIp.Right + 4;
-
-            txtServerIp.Location = new Point(curX, midY - txtServerIp.Height / 2);
-            curX = txtServerIp.Right + 14;
-
-            lblPort.Location = new Point(curX, midY - lblPort.PreferredSize.Height / 2);
-            curX = lblPort.Right + 4;
-
-            txtPort.Location = new Point(curX, midY - txtPort.Height / 2);
-            curX = txtPort.Right + 14;
-
-            Button[] topButtons = { btnConnect, btnDisconnect, btnTestConnection, btnOpenFolder, btnViewServerFiles };
-            foreach (var btn in topButtons)
-            {
-                btn.Location = new Point(curX, midY - btn.Height / 2);
-                curX = btn.Right + 6;
-            }
-
-            lblStatusDot.Location = new Point(curX + 8, midY - lblStatusDot.PreferredSize.Height / 2);
-            lblStatusText.Location = new Point(lblStatusDot.Right + 4, midY - lblStatusText.PreferredSize.Height / 2);
+            // Panel tự cao thêm khi phải xuống nhiều hàng. Việc set Height ở đây sẽ
+            // tự kích hoạt thêm một lần Resize -> gọi lại chính hàm này, nhưng lần
+            // thứ 2 sẽ tính ra đúng cùng 1 chiều cao nên không lặp vô hạn (tự ổn định).
+            if (pnlTop.Height != neededHeight)
+                pnlTop.Height = neededHeight;
         }
 
         private void LayoutBottomButtons(Panel pnlBottom)
         {
-            btnDownloadSelected.Location = new Point(pnlBottom.Width - btnDownloadSelected.Width - 16, 8);
-            btnRetryFailed.Location = new Point(btnDownloadSelected.Left - btnRetryFailed.Width - 8, 10);
-            btnDeleteAll.Location = new Point(btnRetryFailed.Left - btnDeleteAll.Width - 8, 10);
-            btnDeleteSelected.Location = new Point(btnDeleteAll.Left - btnDeleteSelected.Width - 8, 10);
-            btnSelectAll.Location = new Point(btnDeleteSelected.Left - btnSelectAll.Width - 8, 10);
+            const int marginX = 16;
+            const int summaryMinWidth = 140; // đủ chỗ tối thiểu để đọc dòng tóm tắt
 
-            int availableWidth = Math.Max(0, btnSelectAll.Left - lblSummary.Left - 12);
-            lblSummary.Size = new Size(availableWidth, pnlBottom.Height);
+            int buttonsTotalWidth =
+                btnSelectAll.Width + btnDeleteSelected.Width + btnDeleteAll.Width +
+                btnRetryFailed.Width + btnDownloadSelected.Width + 6 * 4;
+
+            int available = Math.Max(summaryMinWidth, pnlBottom.Width - marginX * 2 - buttonsTotalWidth - 12);
+            lblSummary.Size = new Size(available, 34);
+
+            int neededHeight = LayoutFlowRow(pnlBottom.Width, marginX, 34, 6, BuildBottomFlowItems(), apply: true);
+
+            if (pnlBottom.Height != neededHeight)
+                pnlBottom.Height = neededHeight;
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  MINIMUM WINDOW SIZE (chống mất nút khi thu nhỏ cửa sổ)
+        // ══════════════════════════════════════════════════════════════
+        //
+        // Vì top bar/bottom bar giờ tự xuống dòng (LayoutFlowRow ở trên), cửa sổ
+        // không còn cần rộng bằng TỔNG mọi control nữa — chỉ cần đủ rộng cho
+        // CONTROL ĐƠN LẺ RỘNG NHẤT (một nút, hay dòng chữ tiêu đề) là đủ, control
+        // đó không thể tự bẻ đôi nên đây mới là giới hạn thực sự không thể nhỏ hơn.
+        // Chiều cao tối thiểu được "đo thử" (apply:false, không đụng Location) ở
+        // đúng chiều rộng tối thiểu đó, để biết chắc top/bottom bar cần bao nhiêu
+        // hàng khi bị dồn hẹp nhất, cộng thêm khoảng tối thiểu cho DataGridView.
+        private void EnsureMinimumWindowSize()
+        {
+            int widestSingleControl = new[]
+            {
+                lblBrand.PreferredSize.Width,
+                btnConnect.Width, btnDisconnect.Width, btnTestConnection.Width, btnOpenFolder.Width, btnViewServerFiles.Width,
+                btnSelectAll.Width, btnDeleteSelected.Width, btnDeleteAll.Width, btnRetryFailed.Width, btnDownloadSelected.Width
+            }.Max();
+
+            int minClientWidth = Math.Max(320, widestSingleControl + 32);
+
+            int topHeightAtMinWidth = LayoutFlowRow(minClientWidth, 16, 34, 4, BuildTopFlowItems(), apply: false);
+
+            lblSummary.Size = new Size(140, 34); // kích thước tối thiểu giả định để đo
+            int bottomHeightAtMinWidth = LayoutFlowRow(minClientWidth, 16, 34, 6, BuildBottomFlowItems(), apply: false);
+
+            const int gridMinHeight = 160; // đủ để thấy header + vài dòng dữ liệu, có thanh cuộn khi cần
+            const int bordersHeight = 2;   // 2 đường viền 1px trên/dưới
+
+            int minClientHeight = topHeightAtMinWidth + bottomHeightAtMinWidth + bordersHeight + gridMinHeight;
+
+            this.MinimumSize = this.SizeFromClientSize(new Size(minClientWidth, minClientHeight));
+
+            // Bước đo ở trên chỉ tính toán (không apply Location), nhưng lblSummary.Size
+            // vừa bị đổi tạm để đo -> layout lại đúng theo kích thước panel thật hiện tại.
+            LayoutTopControls();
+            LayoutBottomButtons((Panel)lblSummary.Parent!);
         }
 
         private void BuildGrid()
