@@ -9,24 +9,21 @@ namespace ClientApp.Services
 {
     public class DownloadService
     {
-        private readonly TcpClientService _clientService;
-        private readonly string _downloadFolder;
-        private readonly SemaphoreSlim _semaphore;
+        private readonly TcpClientService _clientService; // Giao tiếp Client - Server
+        private readonly string _downloadFolder; // Đường dẫn thư mục dùng để lưu file tải xuống
+        private readonly SemaphoreSlim _semaphore; // Giới hạn số lượng file tải xuống cùng lúc
 
         // Quy tắc xử lý khi file trùng tên
         public enum OverwriteRule { Overwrite, Rename }
         public OverwriteRule TargetRule { get; set; } = OverwriteRule.Rename;
 
-        // Hậu tố dùng cho file đang tải dở, giống ".crdownload" của Chrome —
-        // để Explorer không hiển thị nó như 1 file thật (mở nhầm/tưởng đã xong),
-        // đồng thời giữ lại phần dữ liệu đã tải để RESUME ở lần Thử lại sau.
-        private const string PartialSuffix = ".partial";
+        private const string PartialSuffix = ".partial"; // File sẽ có đuôi .partial
 
         public DownloadService(TcpClientService clientService, int maxConcurrentDownloads)
         {
             _clientService = clientService;
             _semaphore = new SemaphoreSlim(maxConcurrentDownloads);
-
+            //Kiểm tra thư mục Download
             _downloadFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads");
             if (!Directory.Exists(_downloadFolder))
             {
@@ -36,24 +33,21 @@ namespace ClientApp.Services
 
         public async Task ExecuteDownloadAsync(DownloadItem item, Action<DownloadItem>? onProgress = null, CancellationToken cancellationToken = default)
         {
+            // Chờ Semaphore
             await _semaphore.WaitAsync(cancellationToken);
             item.Status = DownloadStatus.Downloading;
             var progressService = new ProgressService(item);
-
             string? targetFilePath = null;
             string? partialFilePath = null;
 
             try
-            {
+            { 
+                //Tạo đường dẫn file
                 string originalFileName = item.FileName;
                 targetFilePath = Path.Combine(_downloadFolder, originalFileName);
-                partialFilePath = targetFilePath + PartialSuffix;
+                partialFilePath = targetFilePath + PartialSuffix; // File.partial dùng cho trường hợp file đang tải dở/lỗi
 
-                // Nếu đã có file .partial từ lần tải trước (bị lỗi/hủy/mất kết nối
-                // giữa chừng) — TIẾP TỤC từ đó thay vì tải lại từ 0%. Chỉ áp dụng
-                // quy tắc trùng tên (Rename/Overwrite) khi đây thật sự là 1 lượt
-                // tải MỚI (chưa có gì dở dang), vì lúc đó mới cần lo va chạm với
-                // 1 file ĐÃ HOÀN TẤT khác đang có sẵn cùng tên.
+                
                 bool isResuming = File.Exists(partialFilePath);
                 long resumeOffset = 0;
 
@@ -94,12 +88,9 @@ namespace ClientApp.Services
                     byte[] buffer = new byte[8192];
                     long sessionBytesRead = 0;
 
-                    // ĐỌC ĐÚNG SỐ BYTE CÒN LẠI SERVER SẼ GỬI (KHÔNG CHỜ EOF ĐỂ TRÁNH TREO)
                     while (sessionBytesRead < remainingSize)
                     {
-                        // Kiểm tra hủy TRƯỚC MỖI LẦN ĐỌC — để việc bấm "Dừng tải"
-                        // hoặc ngắt kết nối dừng NGAY GIỮA CHỪNG file đang tải,
-                        // thay vì tải nốt tới 100% mới dừng.
+                        // Kiểm tra CancellationToken
                         cancellationToken.ThrowIfCancellationRequested();
 
                         int bytesToRead = (int)Math.Min(buffer.Length, remainingSize - sessionBytesRead);
@@ -113,7 +104,7 @@ namespace ClientApp.Services
                         await fileStream.WriteAsync(buffer, 0, bytesRead, cancellationToken);
                         sessionBytesRead += bytesRead;
 
-                        // Tiến độ TỔNG = phần đã có từ trước (nếu resume) + phần vừa nhận
+                        // Cập nhật Process
                         long totalDownloaded = thisResumeOffset + sessionBytesRead;
                         progressService.UpdateProgress(totalDownloaded);
 
@@ -138,13 +129,9 @@ namespace ClientApp.Services
             {
                 item.Status = DownloadStatus.Failed;
                 item.SpeedMbps = 0;
-
-                // KHÔNG xóa file .partial nữa — giữ lại để lần "Thử lại" sau có thể
-                // Resume tiếp thay vì tải lại từ đầu. File .partial không có phần mở
-                // rộng thật (vd .mp4, .pdf) nên Explorer không hiển thị/mở nhầm nó
-                // như 1 file đã tải xong.
                 onProgress?.Invoke(item);
             }
+
             finally
             {
                 _semaphore.Release();
