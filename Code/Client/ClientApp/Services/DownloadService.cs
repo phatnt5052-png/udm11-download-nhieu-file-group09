@@ -153,11 +153,29 @@ namespace ClientApp.Services
                 }, cancellationToken, resumeOffset);
 
                 // Tải xong trọn vẹn — đổi tên .partial thành tên file thật.
-                if (File.Exists(thisTargetFilePath))
+                // QUAN TRỌNG: dùng retry ngắn cho thao tác đổi tên này. Với file lớn, ngay
+                // sau khi ghi xong, phần mềm diệt virus / Windows Search Indexer có thể khoá
+                // tạm file đó trong chốc lát để quét, khiến File.Move ném lỗi "đang được sử
+                // dụng bởi tiến trình khác" — dù DỮ LIỆU ĐÃ TẢI VỀ ĐẦY ĐỦ VÀ CHÍNH XÁC. Nếu
+                // không retry, người dùng sẽ thấy hiện tượng "tải hết 100% rồi mới báo Lỗi"
+                // dù mạng hoàn toàn không có vấn đề gì.
+                const int maxRenameAttempts = 5;
+                for (int attempt = 1; attempt <= maxRenameAttempts; attempt++)
                 {
-                    File.Delete(thisTargetFilePath);
+                    try
+                    {
+                        if (File.Exists(thisTargetFilePath))
+                        {
+                            File.Delete(thisTargetFilePath);
+                        }
+                        File.Move(thisPartialFilePath, thisTargetFilePath);
+                        break;
+                    }
+                    catch (IOException) when (attempt < maxRenameAttempts)
+                    {
+                        await Task.Delay(300 * attempt, cancellationToken);
+                    }
                 }
-                File.Move(thisPartialFilePath, thisTargetFilePath);
 
                 item.Status = DownloadStatus.Completed;
                 item.Progress = 100;
