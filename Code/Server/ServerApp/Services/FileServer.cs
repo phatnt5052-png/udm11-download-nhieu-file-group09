@@ -17,6 +17,14 @@ namespace ServerApp.Services
         private CancellationTokenSource _cts;
         private bool _isRunning;
 
+        private readonly HashSet<TcpClient> _connectedClients = new();
+        private readonly object _clientsLock = new();
+
+        // Tiền tố nhận diện lỗi "resume không hợp lệ" trong thông điệp ERROR trả về —
+        // Client dựa vào tiền tố này để phân biệt với lỗi "không tìm thấy file" thông
+        // thường, PHẢI khớp với hằng số cùng tên bên TcpClientService (phía Client).
+        private const string ResumeInvalidMarker = "[RESUME_INVALID] ";
+
         public event Action<string> OnLog;
 
         public bool IsRunning => _isRunning;
@@ -44,6 +52,12 @@ namespace ServerApp.Services
                 while (!_cts.Token.IsCancellationRequested)
                 {
                     TcpClient client = await _listener.AcceptTcpClientAsync();
+
+                    lock (_clientsLock)
+                    {
+                        _connectedClients.Add(client);
+                    }
+
                     Log($"Client kết nối từ: {client.Client.RemoteEndPoint}");
 
                     _ = Task.Run(() => HandleClientAsync(client, _cts.Token));
@@ -94,27 +108,61 @@ namespace ServerApp.Services
                             // Đọc tên file mà client yêu cầu
                             string fileName = await ReadStringAsync(stream);
 
+                            // QUAN TRỌNG (fix lỗi "Thử lại/Tải lại không tiếp tục được"):
+                            // Client LUÔN gửi kèm vị trí byte muốn tiếp tục (0 nếu tải mới).
+                            // Trước đây Server không đọc giá trị này, nên mỗi lần "resume"
+                            // Server vẫn gửi lại TOÀN BỘ file từ đầu trong khi Client lại nối
+                            // (Append) phần dữ liệu mới vào SAU phần đã tải dở → file kết quả
+                            // bị nhân đôi/hỏng. Giờ Server phải đọc đúng giá trị này để không
+                            // lệch protocol, và dùng nó để chỉ gửi phần còn thiếu.
+                            long resumeOffset = await ReadInt64Async(stream);
+                            if (resumeOffset < 0) resumeOffset = 0;
+
                             if (_fileService.FileExists(fileName))
                             {
-                                // Gửi OK + tên file + kích thước
-                                await WriteStringAsync(stream, "OK");
-                                await WriteStringAsync(stream, fileName);
+                                long fileSize = _fileService.GetFileSize(fileName);
 
-                                using (var fileStream = _fileService.OpenReadStream(fileName))
+                                if (resumeOffset > fileSize)
                                 {
-                                    long fileSize = fileStream.Length;
-                                    await WriteInt64Async(stream, fileSize);
+                                    // Phần .partial phía Client dài hơn cả file thật hiện có trên
+                                    // Server (ví dụ file trên Server đã bị thay bằng bản khác/nhỏ
+                                    // hơn) → không thể resume. Báo lỗi rõ ràng kèm mã nhận diện để
+                                    // Client tự xoá file .partial hỏng và tải lại từ đầu ở lần sau,
+                                    // thay vì lặp lại lỗi mãi mãi mỗi lần bấm "Thử lại".
+                                    await WriteStringAsync(stream, "ERROR");
+                                    await WriteStringAsync(stream,
+                                        $"{ResumeInvalidMarker}Vị trí tiếp tục ({resumeOffset} bytes) vượt quá kích thước file hiện tại trên Server ({fileSize} bytes).");
 
-                                    // Gửi nội dung file
-                                    byte[] buffer = new byte[8192];
-                                    int bytesRead;
+                                    Log($"Client yêu cầu resume file '{fileName}' với offset không hợp lệ ({resumeOffset}/{fileSize} bytes).");
+                                }
+                                else
+                                {
+                                    long remainingSize = fileSize - resumeOffset;
 
-                                    while ((bytesRead = await fileStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                                    // Gửi OK + tên file + SỐ BYTE CÒN LẠI (không phải tổng dung lượng)
+                                    await WriteStringAsync(stream, "OK");
+                                    await WriteStringAsync(stream, fileName);
+                                    await WriteInt64Async(stream, remainingSize);
+
+                                    using (var fileStream = _fileService.OpenReadStream(fileName, resumeOffset))
                                     {
-                                        await stream.WriteAsync(buffer, 0, bytesRead);
-                                    }
+                                        // Gửi đúng phần nội dung còn thiếu, bắt đầu từ resumeOffset
+                                        byte[] buffer = new byte[8192];
+                                        long totalSent = 0;
 
-                                    Log($"Client yêu cầu file '{fileName}' ({fileSize} bytes). Đã gửi xong.");
+                                        while (totalSent < remainingSize)
+                                        {
+                                            int bytesToRead = (int)Math.Min(buffer.Length, remainingSize - totalSent);
+                                            int bytesRead = await fileStream.ReadAsync(buffer, 0, bytesToRead);
+
+                                            if (bytesRead == 0) break; // File bị thay đổi/ngắn lại giữa chừng
+
+                                            await stream.WriteAsync(buffer, 0, bytesRead);
+                                            totalSent += bytesRead;
+                                        }
+
+                                        Log($"Client yêu cầu file '{fileName}' (offset {resumeOffset}, còn lại {remainingSize} bytes). Đã gửi xong {totalSent} bytes.");
+                                    }
                                 }
                             }
                             else
@@ -133,6 +181,13 @@ namespace ServerApp.Services
                 {
                     Log($"Lỗi xử lý Client: {ex.Message}");
                 }
+                finally
+                {
+                    lock (_clientsLock)
+                    {
+                        _connectedClients.Remove(client);
+                    }
+                }
             }
         }
 
@@ -142,8 +197,32 @@ namespace ServerApp.Services
             if (!_isRunning) return;
 
             _isRunning = false;
+
+            // Dừng nhận Client mới
             _cts?.Cancel();
             _listener?.Stop();
+
+            // Lấy danh sách các Client đang kết nối
+            TcpClient[] clients;
+
+            lock (_clientsLock)
+            {
+                clients = _connectedClients.ToArray();
+                _connectedClients.Clear();
+            }
+
+            // Đóng toàn bộ connection đang hoạt động
+            foreach (TcpClient client in clients)
+            {
+                try
+                {
+                    client.Close();
+                }
+                catch
+                {
+                    // Bỏ qua lỗi khi đóng connection
+                }
+            }
 
             Log("Server đã dừng.");
         }

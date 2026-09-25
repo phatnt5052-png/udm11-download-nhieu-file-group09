@@ -9,8 +9,21 @@ using ClientApp.Models;
 
 namespace ClientApp.Services
 {
+    // Báo hiệu: Server từ chối resume vì vị trí (offset) mà file .partial phía Client
+    // đang giữ không còn khớp với file thật hiện có trên Server (ví dụ file trên Server
+    // đã bị thay thế/co lại nhỏ hơn). Đây KHÔNG phải lỗi mất kết nối, cũng KHÔNG phải
+    // lỗi "không tìm thấy file" — cần được DownloadService xử lý riêng bằng cách xoá
+    // file .partial hỏng để lần tải sau bắt đầu lại sạch sẽ từ đầu, thay vì lặp lại
+    // lỗi này mãi mãi mỗi lần bấm "Thử lại".
+    public class ResumeOffsetInvalidException : IOException
+    {
+        public ResumeOffsetInvalidException(string message) : base(message) { }
+    }
+
     public class TcpClientService
     {
+        // PHẢI khớp với hằng số cùng tên bên FileServer (phía Server).
+        private const string ResumeInvalidMarker = "[RESUME_INVALID] ";
         private readonly string _ip;
         private readonly int _port;
 
@@ -86,18 +99,21 @@ namespace ClientApp.Services
 
         public async Task DownloadFileFromServerAsync(
             string fileName,
-            Func<Stream, long, Task> dataHandler)
+            Func<Stream, long, Task> dataHandler,
+            CancellationToken cancellationToken = default,
+            long resumeOffset = 0)
         {
             try
             {
                 using var client = new TcpClient();
-                using var connectCts = new CancellationTokenSource(ConnectTimeout);
+                using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                connectCts.CancelAfter(ConnectTimeout);
 
                 try
                 {
                     await client.ConnectAsync(_ip, _port, connectCts.Token);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
                     throw new IOException($"Không thể kết nối tới Server {_ip}:{_port} (hết thời gian chờ).");
                 }
@@ -106,29 +122,40 @@ namespace ClientApp.Services
 
                 await WriteStringAsync(stream, "GET");
                 await WriteStringAsync(stream, fileName);
+                // Vị trí byte muốn Server tiếp tục gửi từ đó (0 = tải từ đầu).
+                await WriteInt64Async(stream, resumeOffset);
 
                 string response = await ReadStringAsync(stream);
 
                 if (response == "OK")
                 {
                     string serverFileName = await ReadStringAsync(stream);
-                    long fileSize = await ReadInt64Async(stream);
 
-                    if (fileSize < 0)
+                    // Server trả về SỐ BYTE CÒN LẠI SẼ GỬI (không phải tổng dung lượng
+                    // file) — khi resumeOffset > 0, đây là phần còn thiếu.
+                    long remainingSize = await ReadInt64Async(stream);
+
+                    if (remainingSize < 0)
                     {
                         throw new IOException("Kích thước file từ Server không hợp lệ.");
                     }
 
-                    await dataHandler(stream, fileSize);
+                    await dataHandler(stream, remainingSize);
                     IsConnected = true;
                 }
                 else if (response == "ERROR")
                 {
                     string errorMessage = await ReadStringAsync(stream);
 
-                    // Lỗi "không tìm thấy file" không có nghĩa là mất kết nối
-                    // tới Server — Server vẫn đang phản hồi bình thường.
+                    // Lỗi "không tìm thấy file" / "resume không hợp lệ" không có nghĩa là
+                    // mất kết nối tới Server — Server vẫn đang phản hồi bình thường.
                     IsConnected = true;
+
+                    if (errorMessage.StartsWith(ResumeInvalidMarker))
+                    {
+                        throw new ResumeOffsetInvalidException(errorMessage.Substring(ResumeInvalidMarker.Length));
+                    }
+
                     throw new FileNotFoundException(errorMessage);
                 }
                 else
@@ -139,6 +166,16 @@ namespace ClientApp.Services
             catch (FileNotFoundException)
             {
                 throw; // Đã set IsConnected = true ở trên, không phải lỗi mất kết nối
+            }
+            catch (ResumeOffsetInvalidException)
+            {
+                throw; // Đã set IsConnected = true ở trên, không phải lỗi mất kết nối
+            }
+            catch (OperationCanceledException)
+            {
+                // Người dùng chủ động dừng tải (nút "Dừng tải") hoặc bấm "Ngắt kết nối" —
+                // đây KHÔNG phải lỗi mất kết nối tới Server, không đổi cờ IsConnected.
+                throw;
             }
             catch
             {
@@ -193,6 +230,12 @@ namespace ClientApp.Services
             byte[] data = new byte[8];
             await ReadExactAsync(stream, data, 0, 8);
             return BitConverter.ToInt64(data, 0);
+        }
+
+        private static async Task WriteInt64Async(NetworkStream stream, long value)
+        {
+            byte[] data = BitConverter.GetBytes(value);
+            await stream.WriteAsync(data, 0, data.Length);
         }
 
         private static async Task ReadExactAsync(NetworkStream stream, byte[] buffer, int offset, int count)

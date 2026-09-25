@@ -6,6 +6,7 @@ namespace ClientApp.Services
     {
         private readonly List<DownloadItem> _queue = new();
         private readonly object _lock = new();
+
         public bool CheckDuplicate(string fileName)
         {
             lock (_lock)
@@ -53,4 +54,3 @@ namespace ClientApp.Services
         }
     }
 }
-
