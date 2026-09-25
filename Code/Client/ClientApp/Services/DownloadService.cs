@@ -49,7 +49,7 @@ namespace ClientApp.Services
                         string nameWithoutExt = Path.GetFileNameWithoutExtension(originalFileName);
                         string uniqueName = $"{nameWithoutExt}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
                         targetFilePath = Path.Combine(_downloadFolder, uniqueName);
-                        item.FileName = uniqueName; // Cập nhật tên hiển thị mới trên giao diện
+                        // item.FileName = uniqueName; // Cập nhật tên hiển thị mới trên giao diện
                     }
                     else if (TargetRule == OverwriteRule.Overwrite)
                     {

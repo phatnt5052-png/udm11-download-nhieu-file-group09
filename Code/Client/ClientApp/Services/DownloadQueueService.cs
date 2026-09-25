@@ -43,6 +43,14 @@ namespace ClientApp.Services
                 return new List<DownloadItem>(_queue);
             }
         }
+
+        public void ClearQueue()
+        {
+            lock (_lock)
+            {
+                _queue.Clear();
+            }
+        }
     }
 }
 
