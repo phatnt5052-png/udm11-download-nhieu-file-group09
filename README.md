@@ -21,4 +21,3 @@
 - Xử lý lỗi tải file
 - Xử lý file trùng tên
 
-LINK GITHUB Nhóm: https://github.com/phatnt5052-png/udm11-download-nhieu-file-group09.git
