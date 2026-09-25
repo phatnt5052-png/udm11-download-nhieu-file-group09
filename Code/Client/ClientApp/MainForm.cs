@@ -1182,6 +1182,21 @@ namespace ClientApp
                     return;
                 }
 
+                // FIX: "Thử lại" chỉ có ý nghĩa với file đang ở trạng thái LỖI. Trước đây
+                // nút này chấp nhận cả trạng thái "Chờ" (chưa từng bấm Tải) và "Hoàn thành",
+                // khiến người dùng vô tình bấm nhầm "Thử lại" trên 1 file còn đang "Chờ" thì
+                // Client lại tự động BẮT ĐẦU TẢI file đó — trái với kỳ vọng của một nút
+                // "thử lại", và không có cách nào phân biệt được với việc chủ động bấm "Tải".
+                if (item.Status != DownloadStatus.Failed)
+                {
+                    string message = item.Status == DownloadStatus.Completed
+                        ? $"'{item.FileName}' đã tải xong, không có gì để thử lại.\n\nNếu muốn tải lại, hãy tick chọn file và bấm \"Tải các file đã chọn\"."
+                        : $"'{item.FileName}' chưa được tải (đang ở trạng thái Chờ).\n\nNút \"Thử lại\" chỉ dùng cho file bị lỗi. Hãy tick chọn file và bấm \"Tải các file đã chọn\" để bắt đầu tải.";
+
+                    MessageBox.Show(message, "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
                 _ = DownloadItemsAsync(new List<DownloadItem> { item });
             }
             else if (e.ColumnIndex == colDelete.Index)
@@ -1363,11 +1378,25 @@ namespace ClientApp
             bool stoppedByUser = _downloadCts?.IsCancellationRequested ?? false;
             bool connectionLost = !IsClientConnected();
 
+            // Liệt kê lý do lỗi thật của từng file thất bại (tối đa 5 dòng để hộp thoại
+            // không quá dài) — thay vì chỉ hiện con số "Lỗi: N" chung chung không rõ nguyên
+            // nhân, giúp người dùng (và người hỗ trợ) biết ngay chuyện gì đang xảy ra.
+            string BuildFailureDetails()
+            {
+                var failedItems = toDownload
+                    .Where(i => i.Status != DownloadStatus.Completed && !string.IsNullOrWhiteSpace(i.LastError))
+                    .Take(5)
+                    .Select(i => $"- {i.FileName}: {i.LastError}")
+                    .ToList();
+
+                return failedItems.Count == 0 ? string.Empty : "\n\nChi tiết lỗi:\n" + string.Join("\n", failedItems);
+            }
+
             if (connectionLost)
             {
                 DisconnectClient();
                 MessageBox.Show(
-                    $"Mất kết nối tới Server giữa chừng.\nĐã tải xong: {successCount}   |   Lỗi: {failCount}",
+                    $"Mất kết nối tới Server giữa chừng.\nĐã tải xong: {successCount}   |   Lỗi: {failCount}{BuildFailureDetails()}",
                     "Mất kết nối", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             else if (stoppedByUser)
@@ -1379,7 +1408,7 @@ namespace ClientApp
             else
             {
                 MessageBox.Show(
-                    $"Hoàn tất.\nThành công: {successCount}   |   Lỗi: {failCount}",
+                    $"Hoàn tất.\nThành công: {successCount}   |   Lỗi: {failCount}{BuildFailureDetails()}",
                     "Tải xuống", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
@@ -1395,10 +1424,11 @@ namespace ClientApp
             {
                 await _downloadService!.ExecuteDownloadAsync(item, cancellationToken: token);
             }
-            catch
+            catch (Exception ex)
             {
                 item.Status = DownloadStatus.Failed;
                 item.SpeedMbps = 0;
+                item.LastError = ex.Message;
             }
 
             DeselectRow(item);

@@ -9,8 +9,21 @@ using ClientApp.Models;
 
 namespace ClientApp.Services
 {
+    // Báo hiệu: Server từ chối resume vì vị trí (offset) mà file .partial phía Client
+    // đang giữ không còn khớp với file thật hiện có trên Server (ví dụ file trên Server
+    // đã bị thay thế/co lại nhỏ hơn). Đây KHÔNG phải lỗi mất kết nối, cũng KHÔNG phải
+    // lỗi "không tìm thấy file" — cần được DownloadService xử lý riêng bằng cách xoá
+    // file .partial hỏng để lần tải sau bắt đầu lại sạch sẽ từ đầu, thay vì lặp lại
+    // lỗi này mãi mãi mỗi lần bấm "Thử lại".
+    public class ResumeOffsetInvalidException : IOException
+    {
+        public ResumeOffsetInvalidException(string message) : base(message) { }
+    }
+
     public class TcpClientService
     {
+        // PHẢI khớp với hằng số cùng tên bên FileServer (phía Server).
+        private const string ResumeInvalidMarker = "[RESUME_INVALID] ";
         private readonly string _ip;
         private readonly int _port;
 
@@ -134,9 +147,15 @@ namespace ClientApp.Services
                 {
                     string errorMessage = await ReadStringAsync(stream);
 
-                    // Lỗi "không tìm thấy file" không có nghĩa là mất kết nối
-                    // tới Server — Server vẫn đang phản hồi bình thường.
+                    // Lỗi "không tìm thấy file" / "resume không hợp lệ" không có nghĩa là
+                    // mất kết nối tới Server — Server vẫn đang phản hồi bình thường.
                     IsConnected = true;
+
+                    if (errorMessage.StartsWith(ResumeInvalidMarker))
+                    {
+                        throw new ResumeOffsetInvalidException(errorMessage.Substring(ResumeInvalidMarker.Length));
+                    }
+
                     throw new FileNotFoundException(errorMessage);
                 }
                 else
@@ -145,6 +164,10 @@ namespace ClientApp.Services
                 }
             }
             catch (FileNotFoundException)
+            {
+                throw; // Đã set IsConnected = true ở trên, không phải lỗi mất kết nối
+            }
+            catch (ResumeOffsetInvalidException)
             {
                 throw; // Đã set IsConnected = true ở trên, không phải lỗi mất kết nối
             }

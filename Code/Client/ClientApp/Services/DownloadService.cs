@@ -19,6 +19,13 @@ namespace ClientApp.Services
 
         private const string PartialSuffix = ".partial"; // File sẽ có đuôi .partial
 
+        // Nếu không nhận thêm được byte dữ liệu nào trong khoảng thời gian này khi đang
+        // tải, coi như kết nối đã "chết" (ví dụ rút dây mạng vật lý mà không có gói
+        // FIN/RST nào được gửi) và chủ động báo lỗi ngay, thay vì để tiến trình tải bị
+        // treo vô thời hạn ở trạng thái "Đang tải" — đúng hiện tượng "dừng trạng thái
+        // tải file" khi mất kết nối giữa chừng mà không bao giờ chuyển sang "Lỗi".
+        private static readonly TimeSpan InactivityTimeout = TimeSpan.FromSeconds(15);
+
         public DownloadService(TcpClientService clientService, int maxConcurrentDownloads)
         {
             _clientService = clientService;
@@ -41,13 +48,19 @@ namespace ClientApp.Services
             string? partialFilePath = null;
 
             try
-            { 
-                //Tạo đường dẫn file
-                string originalFileName = item.FileName;
-                targetFilePath = Path.Combine(_downloadFolder, originalFileName);
+            {
+                // QUAN TRỌNG: "tên gửi lên Server" và "tên file lưu cục bộ" PHẢI tách biệt.
+                // SourceFileName là tên thật, bất biến, dùng để xin Server — còn FileName có
+                // thể bị đổi (xem nhánh Rename bên dưới) khi trùng tên với file đã tải trước
+                // đó. Nếu dùng chung 1 biến, sau khi bị đổi tên cục bộ 1 lần thì mọi lần "Thử
+                // lại" sau sẽ gửi NHẦM tên đã đổi lên Server (tên không tồn tại trên Server)
+                // → Server luôn báo lỗi "không tồn tại" → tải thất bại vĩnh viễn.
+                string sourceFileName = item.SourceFileName;
+                string localFileName = item.FileName;
+                targetFilePath = Path.Combine(_downloadFolder, localFileName);
                 partialFilePath = targetFilePath + PartialSuffix; // File.partial dùng cho trường hợp file đang tải dở/lỗi
 
-                
+
                 bool isResuming = File.Exists(partialFilePath);
                 long resumeOffset = 0;
 
@@ -59,12 +72,12 @@ namespace ClientApp.Services
                 {
                     if (TargetRule == OverwriteRule.Rename)
                     {
-                        string ext = Path.GetExtension(originalFileName);
-                        string nameWithoutExt = Path.GetFileNameWithoutExtension(originalFileName);
+                        string ext = Path.GetExtension(localFileName);
+                        string nameWithoutExt = Path.GetFileNameWithoutExtension(localFileName);
                         string uniqueName = $"{nameWithoutExt}_{DateTime.Now:yyyyMMddHHmmss}{ext}";
                         targetFilePath = Path.Combine(_downloadFolder, uniqueName);
                         partialFilePath = targetFilePath + PartialSuffix;
-                        item.FileName = uniqueName; // Cập nhật tên hiển thị mới trên giao diện
+                        item.FileName = uniqueName; // Chỉ đổi tên HIỂN THỊ/LƯU CỤC BỘ, không đụng tới SourceFileName
                     }
                     else if (TargetRule == OverwriteRule.Overwrite)
                     {
@@ -76,9 +89,16 @@ namespace ClientApp.Services
                 string thisTargetFilePath = targetFilePath;
                 long thisResumeOffset = resumeOffset;
 
-                // Tải file từ Server bằng tên file gốc, kèm vị trí byte muốn tiếp tục
-                await _clientService.DownloadFileFromServerAsync(originalFileName, async (networkStream, remainingSize) =>
+                // Tải file từ Server bằng ĐÚNG TÊN THẬT trên Server (sourceFileName), kèm vị
+                // trí byte muốn tiếp tục — bất kể tên hiển thị/lưu cục bộ đã từng bị đổi hay chưa.
+                await _clientService.DownloadFileFromServerAsync(sourceFileName, async (networkStream, remainingSize) =>
                 {
+                    // Server luôn trả về đúng số byte CÒN LẠI dựa trên kích thước thật hiện
+                    // tại của file trên Server. Tự đồng bộ lại FileSize hiển thị theo giá trị
+                    // này (thay vì tin tưởng tuyệt đối kích thước lấy được lúc LIST trước đó)
+                    // để thanh tiến trình luôn tính đúng %, kể cả khi resume.
+                    item.FileSize = thisResumeOffset + remainingSize;
+
                     using var fileStream = new FileStream(
                         thisPartialFilePath,
                         thisResumeOffset > 0 ? FileMode.Append : FileMode.Create,
@@ -94,7 +114,26 @@ namespace ClientApp.Services
                         cancellationToken.ThrowIfCancellationRequested();
 
                         int bytesToRead = (int)Math.Min(buffer.Length, remainingSize - sessionBytesRead);
-                        int bytesRead = await networkStream.ReadAsync(buffer, 0, bytesToRead, cancellationToken);
+
+                        // LƯU Ý: Task.Delay ở đây KHÔNG được gắn cancellationToken của người
+                        // dùng — nếu gắn, khi người dùng bấm "Hủy" thì delayTask cũng lập tức
+                        // chuyển sang trạng thái Canceled và có thể "thắng" Task.WhenAny, khiến
+                        // một lượt hủy chủ động của người dùng bị báo nhầm thành "mất kết nối do
+                        // timeout". readTask (có gắn cancellationToken) đã tự đảm nhiệm việc phản
+                        // ứng với hủy: khi người dùng bấm Hủy, chính readTask sẽ chuyển sang
+                        // Canceled và "thắng" Task.WhenAny, sau đó `await readTask` bên dưới sẽ
+                        // ném đúng OperationCanceledException.
+                        Task<int> readTask = networkStream.ReadAsync(buffer, 0, bytesToRead, cancellationToken);
+                        Task delayTask = Task.Delay(InactivityTimeout);
+                        Task completedTask = await Task.WhenAny(readTask, delayTask);
+
+                        if (completedTask == delayTask)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            throw new IOException($"Mất kết nối tới Server: không nhận được dữ liệu trong {InactivityTimeout.TotalSeconds:F0} giây.");
+                        }
+
+                        int bytesRead = await readTask;
 
                         if (bytesRead == 0)
                         {
@@ -125,10 +164,33 @@ namespace ClientApp.Services
                 item.SpeedMbps = 0;
                 onProgress?.Invoke(item);
             }
-            catch
+            catch (ResumeOffsetInvalidException ex)
+            {
+                // File .partial hiện có không còn khớp với file thật trên Server (đã bị
+                // thay thế/co lại). Xoá file .partial hỏng ngay để lần "Thử lại" tiếp theo
+                // của người dùng tự động tải lại TỪ ĐẦU thay vì lặp lại lỗi này mãi mãi.
+                try
+                {
+                    if (partialFilePath != null && File.Exists(partialFilePath))
+                    {
+                        File.Delete(partialFilePath);
+                    }
+                }
+                catch
+                {
+                    // Bỏ qua lỗi xóa file phụ — không để ảnh hưởng luồng chính.
+                }
+
+                item.Status = DownloadStatus.Failed;
+                item.SpeedMbps = 0;
+                item.LastError = ex.Message;
+                onProgress?.Invoke(item);
+            }
+            catch (Exception ex)
             {
                 item.Status = DownloadStatus.Failed;
                 item.SpeedMbps = 0;
+                item.LastError = ex.Message;
                 onProgress?.Invoke(item);
             }
 
